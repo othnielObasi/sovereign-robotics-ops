@@ -18,11 +18,11 @@ import math
 import os
 import random
 import time
-from typing import Any, Dict, Optional, List
+from pathlib import Path
+from typing import Any, Dict
 
 from fastapi import FastAPI, Request, HTTPException
 from pydantic import BaseModel, Field
-
 
 app = FastAPI(title="SRO Mock Simulator", version="0.1.0")
 
@@ -30,6 +30,7 @@ SIM_TICK_HZ = float(os.getenv("SIM_TICK_HZ", "10"))
 DT = 1.0 / max(SIM_TICK_HZ, 1.0)
 
 SIM_TOKEN = os.getenv("SIM_TOKEN", "").strip()
+
 
 def _require_sim_token(request: Request) -> None:
     """Require X-Sim-Token header if SIM_TOKEN is configured.
@@ -44,7 +45,10 @@ def _require_sim_token(request: Request) -> None:
         raise HTTPException(status_code=401, detail="Unauthorized simulator call")
 
 
-with open("world.json", "r", encoding="utf-8") as f:
+# --- Load world.json relative to this file, not the CWD ---
+HERE = Path(__file__).resolve().parent
+WORLD_PATH = HERE / "world.json"
+with WORLD_PATH.open("r", encoding="utf-8") as f:
     WORLD = json.load(f)
 
 OBSTACLES = WORLD.get("obstacles", [])
@@ -101,7 +105,7 @@ def _human_signal(x: float, y: float) -> tuple[bool, float]:
     return True, conf
 
 
-def _step():
+def _step() -> None:
     now = time.time()
     dt = now - state["last_update"]
     if dt <= 0:
@@ -145,7 +149,10 @@ def _step():
     state["human_conf"] = float(hc)
 
     # Geofence alert (for completeness; doesn't clamp position)
-    if not (GEOFENCE["min_x"] <= state["x"] <= GEOFENCE["max_x"] and GEOFENCE["min_y"] <= state["y"] <= GEOFENCE["max_y"]):
+    if not (
+        GEOFENCE["min_x"] <= state["x"] <= GEOFENCE["max_x"]
+        and GEOFENCE["min_y"] <= state["y"] <= GEOFENCE["max_y"]
+    ):
         state["events"].append("geofence_violation")
 
 
@@ -169,20 +176,20 @@ def telemetry(request: Request):
 @app.get("/world")
 def world(request: Request):
     _require_sim_token(request)
-    """Return the static simulated world.
-
-    The frontend uses this to render a 2D map (geofence, obstacles, zones, human).
-    """
+    # Return the static simulated world.
     return {
         "geofence": GEOFENCE,
         "zones": ZONES,
         "obstacles": OBSTACLES,
         "human": HUMAN,
     }
+
+
 @app.post("/command")
 def command(request: Request, cmd: Command):
     _require_sim_token(request)
     _step()
+
     if cmd.intent == "MOVE_TO":
         x = float(cmd.params.get("x", state["x"]))
         y = float(cmd.params.get("y", state["y"]))
@@ -196,7 +203,6 @@ def command(request: Request, cmd: Command):
         return {"ok": True, "stopped": True}
 
     if cmd.intent == "WAIT":
-        # No-op; you could add timers if needed
         return {"ok": True, "wait": cmd.params.get("seconds", 1)}
 
     return {"ok": False, "error": f"Unknown intent: {cmd.intent}"}

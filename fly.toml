@@ -1,4 +1,4 @@
-app = "sro-ops"
+app = "sovereign-robotics-ops"
 primary_region = "lhr"
 
 [build]
