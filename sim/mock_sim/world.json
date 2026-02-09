@@ -1,0 +1,46 @@
+{
+  "geofence": {
+    "min_x": 0,
+    "max_x": 30,
+    "min_y": 0,
+    "max_y": 20
+  },
+  "zones": [
+    {
+      "name": "aisle",
+      "rect": {
+        "min_x": 0,
+        "max_x": 30,
+        "min_y": 0,
+        "max_y": 12
+      }
+    },
+    {
+      "name": "loading_bay",
+      "rect": {
+        "min_x": 0,
+        "max_x": 30,
+        "min_y": 12,
+        "max_y": 20
+      }
+    }
+  ],
+  "obstacles": [
+    {
+      "x": 10,
+      "y": 6
+    },
+    {
+      "x": 18,
+      "y": 8
+    },
+    {
+      "x": 22,
+      "y": 4
+    }
+  ],
+  "human": {
+    "x": 14,
+    "y": 7
+  }
+}
