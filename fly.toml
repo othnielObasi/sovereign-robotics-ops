@@ -24,7 +24,9 @@ primary_region = "lhr"
 
 
 [processes]
-  api = "honcho start -f /app/Procfile"
+  api = "uvicorn backend.app.main:app --host 0.0.0.0 --port 8080"
+  sim = "uvicorn sim.mock_sim.main:app --host 127.0.0.1 --port 8090"
+
 
 
 
