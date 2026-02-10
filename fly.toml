@@ -5,7 +5,7 @@ primary_region = "lhr"
   dockerfile = "Dockerfile.fly"
 
 [env]
-  SIM_BASE_URL = "http://127.0.0.1:8090"
+  SIM_BASE_URL = "http://fly-local-6pn:8090"
 
 [http_service]
   internal_port = 8080
@@ -17,4 +17,6 @@ primary_region = "lhr"
 
 [processes]
   api = "honcho start -f /app/Procfile"
+
+
 
