@@ -16,6 +16,8 @@ RUN pip install uv==0.4.20
 COPY backend/pyproject.toml /app/backend/pyproject.toml
 WORKDIR /app/backend
 RUN uv pip install --system ".[postgres]"
+RUN pip install --no-cache-dir psycopg2-binary>=2.9.9
+
 
 
 # Install simulator deps (it uses requirements.txt)
