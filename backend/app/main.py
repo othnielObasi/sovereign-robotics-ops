@@ -74,9 +74,15 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+
 @app.get("/")
 def root():
-    return {"name": "Sovereign Robotics Ops API", "docs": "/docs", "health": "/health"}
+    return {
+        "name": "Sovereign Robotics Ops API",
+        "status": "ok",
+        "docs": "/docs",
+        "health": "/health"
+    }
 
 
 
