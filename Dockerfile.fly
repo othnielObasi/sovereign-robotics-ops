@@ -5,41 +5,40 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
+# System deps:
+# - curl: handy for health checks / debugging
+# - iproute2: provides `ss` for debugging listening ports inside the machine
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
+    iproute2 \
   && rm -rf /var/lib/apt/lists/*
 
 # Install uv for fast, reliable installs from pyproject.toml
-RUN pip install uv==0.4.20
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl iproute2 \
-  && rm -rf /var/lib/apt/lists/*
-
+RUN pip install --no-cache-dir uv==0.4.20
 
 # Install backend dependencies from backend/pyproject.toml (copy first for caching)
 COPY backend/pyproject.toml /app/backend/pyproject.toml
 WORKDIR /app/backend
+
+# Install project deps (with postgres extras)
 RUN uv pip install --system ".[postgres]"
-RUN pip install --no-cache-dir psycopg2-binary>=2.9.9
 
-
+# Ensure binary wheel for psycopg2 is present (safe even if extras already include it)
+RUN pip install --no-cache-dir "psycopg2-binary>=2.9.9"
 
 # Install simulator deps (it uses requirements.txt)
 WORKDIR /app
 COPY sim/mock_sim/requirements.txt /app/sim/mock_sim/requirements.txt
-RUN pip install -r /app/sim/mock_sim/requirements.txt
-
-# Procfile runner
-RUN pip install honcho==1.1.0
+RUN pip install --no-cache-dir -r /app/sim/mock_sim/requirements.txt
 
 # Copy code
 COPY backend /app/backend
 COPY sim /app/sim
-COPY Procfile /app/Procfile
 
 # Make backend imports work cleanly
 ENV PYTHONPATH="/app/backend"
 
 EXPOSE 8080
-CMD ["honcho", "start", "-f", "/app/Procfile"]
+
+# Default process is API (Fly [processes] will override for sim)
+CMD ["uvicorn", "backend.app.main:app", "--host", "0.0.0.0", "--port", "8080"]
