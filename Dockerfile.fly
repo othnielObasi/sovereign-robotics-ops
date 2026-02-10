@@ -15,7 +15,8 @@ RUN pip install uv==0.4.20
 # Install backend dependencies from backend/pyproject.toml (copy first for caching)
 COPY backend/pyproject.toml /app/backend/pyproject.toml
 WORKDIR /app/backend
-RUN uv pip install --system .
+RUN uv pip install --system ".[postgres]"
+
 
 # Install simulator deps (it uses requirements.txt)
 WORKDIR /app
