@@ -74,6 +74,12 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+@app.get("/")
+def root():
+    return {"name": "Sovereign Robotics Ops API", "docs": "/docs", "health": "/health"}
+
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins_list,
