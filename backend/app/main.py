@@ -64,7 +64,20 @@ async def lifespan(app: FastAPI):
     yield
     
     # Shutdown
-    logger.info("👋 Shutting down...")
+    logger.info("Shutting down...")
+    # Stop all active runs gracefully
+    from app.db.session import SessionLocal
+    db = SessionLocal()
+    try:
+        for run_id in list(run_service._stop_flags.keys()):
+            run_service._stop_flags[run_id].set()
+        # Wait briefly for tasks to finish
+        import asyncio
+        tasks = list(run_service._tasks.values())
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+    finally:
+        db.close()
     await run_service.sim.close()
 
 

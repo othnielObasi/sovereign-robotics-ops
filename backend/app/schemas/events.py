@@ -12,6 +12,7 @@ class EventOut(BaseModel):
     type: str
     payload: Dict[str, Any]
     hash: str
+    prev_hash: str = "0" * 64
 
 
 class WsMessage(BaseModel):

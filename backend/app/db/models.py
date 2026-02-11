@@ -39,6 +39,7 @@ class Event(Base):
     type = Column(String, nullable=False)  # TELEMETRY|DECISION|ALERT
     payload_json = Column(Text, nullable=False)
     hash = Column(String, nullable=False)
+    prev_hash = Column(String, nullable=True, default="0" * 64)
 
     run = relationship("Run", back_populates="events")
 
@@ -47,6 +48,6 @@ class TelemetrySample(Base):
     __tablename__ = "telemetry_samples"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    run_id = Column(String, index=True, nullable=False)
+    run_id = Column(String, ForeignKey("runs.id"), index=True, nullable=False)
     ts = Column(DateTime(timezone=True), nullable=False)
     payload_json = Column(Text, nullable=False)

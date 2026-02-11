@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import json
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
+from typing import List
 
 from app.deps import get_db
 from app.services.mission_service import MissionService
@@ -23,13 +24,17 @@ def create_mission(payload: MissionCreate, db: Session = Depends(get_db)):
     )
 
 
-@router.get("/missions", response_model=list[MissionOut])
-def list_missions(db: Session = Depends(get_db)):
-    missions = svc.list(db)
-    out = []
-    for m in missions:
-        out.append(MissionOut(id=m.id, title=m.title, goal=json.loads(m.goal_json), created_at=m.created_at))
-    return out
+@router.get("/missions", response_model=List[MissionOut])
+def list_missions(
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db),
+):
+    missions = svc.list(db, limit=limit, offset=offset)
+    return [
+        MissionOut(id=m.id, title=m.title, goal=json.loads(m.goal_json), created_at=m.created_at)
+        for m in missions
+    ]
 
 
 @router.get("/missions/{mission_id}", response_model=MissionOut)
@@ -38,3 +43,13 @@ def get_mission(mission_id: str, db: Session = Depends(get_db)):
     if not m:
         raise HTTPException(status_code=404, detail="mission not found")
     return MissionOut(id=m.id, title=m.title, goal=json.loads(m.goal_json), created_at=m.created_at)
+
+
+@router.delete("/missions/{mission_id}")
+def delete_mission(mission_id: str, db: Session = Depends(get_db)):
+    m = svc.get(db, mission_id)
+    if not m:
+        raise HTTPException(status_code=404, detail="mission not found")
+    db.delete(m)
+    db.commit()
+    return {"ok": True, "deleted": mission_id}

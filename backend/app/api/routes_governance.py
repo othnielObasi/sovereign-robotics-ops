@@ -12,7 +12,9 @@ router = APIRouter()
 
 @router.get("/policies", response_model=list[PolicyInfo])
 def list_policies():
-    with open("app/policies/policy_catalog.yaml", "r", encoding="utf-8") as f:
+    import pathlib
+    catalog_path = pathlib.Path(__file__).resolve().parent.parent / "policies" / "policy_catalog.yaml"
+    with open(catalog_path, "r", encoding="utf-8") as f:
         doc = yaml.safe_load(f) or {}
     policies = doc.get("policies", [])
     return [

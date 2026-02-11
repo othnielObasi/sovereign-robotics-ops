@@ -53,7 +53,9 @@ export default function RunPage({ params }: { params: { runId: string } }) {
   const [alerts, setAlerts] = useState<any[]>([]);
   const [events, setEvents] = useState<any[]>([]);
   const [status, setStatus] = useState<string>("");
+  const [wsConnected, setWsConnected] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
+  const reconnectTimer = useRef<any>(null);
 
   async function refreshEvents() {
     try {
@@ -71,25 +73,45 @@ export default function RunPage({ params }: { params: { runId: string } }) {
   }, [runId]);
 
   useEffect(() => {
-    const url = wsUrlForRun(runId);
-    const ws = new WebSocket(url);
-    wsRef.current = ws;
+    let disposed = false;
 
-    ws.onopen = () => { ws.send("hello"); };
+    function connect() {
+      if (disposed) return;
+      const url = wsUrlForRun(runId);
+      const ws = new WebSocket(url);
+      wsRef.current = ws;
 
-    ws.onmessage = (ev) => {
-      const msg: WsMessage = JSON.parse(ev.data);
-      if (msg.kind === "telemetry") setTelemetry(msg.data);
-      if (msg.kind === "alert") setAlerts((a) => [{ ts: Date.now(), ...msg.data }, ...a].slice(0, 20));
-      if (msg.kind === "event") refreshEvents();
-      if (msg.kind === "status") setStatus(msg.data.status);
-      try { ws.send("ping"); } catch {}
+      ws.onopen = () => {
+        setWsConnected(true);
+        ws.send("hello");
+      };
+
+      ws.onmessage = (ev) => {
+        const msg: WsMessage = JSON.parse(ev.data);
+        if (msg.kind === "telemetry") setTelemetry(msg.data);
+        if (msg.kind === "alert") setAlerts((a) => [{ ts: Date.now(), ...msg.data }, ...a].slice(0, 20));
+        if (msg.kind === "event") refreshEvents();
+        if (msg.kind === "status") setStatus(msg.data.status);
+        try { ws.send("ping"); } catch {}
+      };
+
+      ws.onerror = () => { setWsConnected(false); };
+      ws.onclose = () => {
+        setWsConnected(false);
+        if (!disposed) {
+          // Reconnect after 2 seconds
+          reconnectTimer.current = setTimeout(connect, 2000);
+        }
+      };
+    }
+
+    connect();
+
+    return () => {
+      disposed = true;
+      clearTimeout(reconnectTimer.current);
+      try { wsRef.current?.close(); } catch {}
     };
-
-    ws.onerror = () => {};
-    ws.onclose = () => {};
-
-    return () => { try { ws.close(); } catch {} };
   }, [runId]);
 
   useEffect(() => {
@@ -149,6 +171,14 @@ export default function RunPage({ params }: { params: { runId: string } }) {
           )}
         </div>
         <div className="flex items-center gap-4">
+          <div className={`flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full border ${
+            wsConnected
+              ? "bg-green-500/20 text-green-400 border-green-500/30"
+              : "bg-red-500/20 text-red-400 border-red-500/30"
+          }`}>
+            <div className={`w-1.5 h-1.5 rounded-full ${wsConnected ? "bg-green-400" : "bg-red-400 animate-pulse"}`} />
+            {wsConnected ? "Live" : "Reconnecting..."}
+          </div>
           <StatusBadge status={currentStatus} />
           <SafetyBadge state={safety.state} detail={safety.detail} />
           {currentStatus !== "stopped" && (

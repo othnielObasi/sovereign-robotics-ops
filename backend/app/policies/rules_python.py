@@ -50,6 +50,16 @@ def evaluate_policies(telemetry: Dict[str, Any], proposal: ActionProposal) -> Go
         reasons.append(f"Robot out of geofence at ({x:.2f},{y:.2f}).")
         risk_score = max(risk_score, 0.95)
 
+    # Also check proposed destination
+    if intent == "MOVE_TO":
+        dest_x = float(params.get("x", x))
+        dest_y = float(params.get("y", y))
+        if not (GEOFENCE["min_x"] <= dest_x <= GEOFENCE["max_x"] and GEOFENCE["min_y"] <= dest_y <= GEOFENCE["max_y"]):
+            if "GEOFENCE_01" not in policy_hits:
+                policy_hits.append("GEOFENCE_01")
+            reasons.append(f"Proposed destination ({dest_x:.2f},{dest_y:.2f}) is outside geofence.")
+            risk_score = max(risk_score, 0.95)
+
     # --- OBSTACLE_CLEARANCE_03 ---
     if intent == "MOVE_TO" and nearest_obstacle_m < MIN_OBSTACLE_CLEARANCE_M:
         policy_hits.append("OBSTACLE_CLEARANCE_03")
@@ -84,6 +94,11 @@ def evaluate_policies(telemetry: Dict[str, Any], proposal: ActionProposal) -> Go
     # --- MIN_CONF_FOR_MOVE (part of uncertainty) ---
     if intent == "MOVE_TO" and telemetry.get("human_detected") and human_conf < MIN_CONF_FOR_MOVE:
         risk_score = max(risk_score, 0.7)
+
+    # --- HITL_05 (Human-in-the-loop trigger) ---
+    if risk_score >= REVIEW_RISK_THRESHOLD and not policy_hits:
+        policy_hits.append("HITL_05")
+        reasons.append(f"Risk score {risk_score:.2f} exceeds review threshold {REVIEW_RISK_THRESHOLD:.2f}; human review required.")
 
     # Decision logic
     if policy_hits:

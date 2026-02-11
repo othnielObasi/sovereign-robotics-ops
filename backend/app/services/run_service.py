@@ -43,20 +43,32 @@ class RunService:
         self._ws_broadcast = broadcaster
 
     def _append_event(self, db: Session, run_id: str, etype: str, payload: Dict[str, Any]) -> Event:
+        # Get previous event hash for chain linking
+        prev = (
+            db.query(Event)
+            .filter(Event.run_id == run_id)
+            .order_by(Event.ts.desc())
+            .first()
+        )
+        prev_hash = prev.hash if prev else "0" * 64
+
+        ts = utc_now()  # single timestamp for both hash and storage
         evt = {
             "run_id": run_id,
-            "ts": utc_now().isoformat(),
+            "ts": ts.isoformat(),
             "type": etype,
             "payload": payload,
+            "prev_hash": prev_hash,
         }
         evt_hash = sha256_canonical(evt)
         row = Event(
             id=new_id("evt"),
             run_id=run_id,
-            ts=utc_now(),
+            ts=ts,
             type=etype,
             payload_json=json.dumps(payload, ensure_ascii=False),
             hash=evt_hash,
+            prev_hash=prev_hash,
         )
         db.add(row)
         return row
@@ -206,3 +218,6 @@ class RunService:
                 await self._ws_broadcast(run_id, {"kind": "status", "data": {"status": "failed"}})
 
         logger.info("Run loop ended: %s", run_id)
+        # Cleanup finished task references
+        self._tasks.pop(run_id, None)
+        self._stop_flags.pop(run_id, None)

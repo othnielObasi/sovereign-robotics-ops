@@ -7,8 +7,8 @@ body {
   @apply bg-slate-900 text-white;
 }
 
-/* Smooth animations */
-* {
-  transition-property: background-color, border-color, color, fill, stroke, opacity, box-shadow, transform;
+/* Smooth animations — scoped to interactive elements only */
+a, button, input, select, textarea {
+  transition-property: background-color, border-color, color, opacity, box-shadow, transform;
   transition-duration: 150ms;
 }

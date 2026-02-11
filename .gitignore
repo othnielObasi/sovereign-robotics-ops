@@ -1,1 +1,7 @@
 frontend/node_modules/
+
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/

@@ -1,17 +1,13 @@
 'use client';
 
 import React, { useEffect, useState } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { listMissions, createMission, startRun } from "@/lib/api";
+import type { Mission } from "@/lib/types";
 
 // API configuration
 const API_URL = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8080";
-
-interface Mission {
-  id: string;
-  title: string;
-  goal?: { x: number; y: number };
-  created_at: string;
-}
 
 interface SystemStatus {
   api: 'connected' | 'disconnected' | 'checking';
@@ -20,6 +16,7 @@ interface SystemStatus {
 }
 
 export default function HomePage() {
+  const router = useRouter();
   const [missions, setMissions] = useState<Mission[]>([]);
   const [status, setStatus] = useState<SystemStatus>({
     api: 'checking',
@@ -65,11 +62,8 @@ export default function HomePage() {
       if (status.api !== 'connected') return;
       
       try {
-        const res = await fetch(`${API_URL}/missions`);
-        if (res.ok) {
-          const data = await res.json();
-          setMissions(data);
-        }
+        const data = await listMissions();
+        setMissions(data);
       } catch (e) {
         console.error('Failed to fetch missions:', e);
       }
@@ -94,11 +88,10 @@ export default function HomePage() {
     }
   }
 
-  // Start run
   async function handleStartRun(missionId: string) {
     try {
       const data = await startRun(missionId);
-      window.location.href = `/runs/${data.run_id}`;
+      router.push(`/runs/${data.run_id}`);
     } catch (e: any) {
       setError(e.message || 'Failed to start run');
     }
@@ -116,12 +109,12 @@ export default function HomePage() {
         <p className="text-xl text-slate-400 mb-6">
           The governance layer for autonomous robot control
         </p>
-        <a 
+        <Link 
           href="/demo" 
           className="inline-flex items-center gap-2 bg-gradient-to-r from-cyan-500 to-blue-600 text-white px-6 py-3 rounded-lg font-semibold hover:opacity-90 transition shadow-lg shadow-cyan-500/30"
         >
           🎮 Try Interactive Demo
-        </a>
+        </Link>
       </div>
 
       {/* Status Cards */}

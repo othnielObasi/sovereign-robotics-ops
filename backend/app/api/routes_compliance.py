@@ -3,54 +3,46 @@ Compliance API Routes
 Endpoints for generating and exporting compliance reports.
 """
 
+import json
 from datetime import datetime
 from typing import Any, Dict, List
 
-from fastapi import APIRouter, Query, HTTPException
+from fastapi import APIRouter, Query, HTTPException, Depends
 from fastapi.responses import PlainTextResponse, JSONResponse
+from sqlalchemy.orm import Session
 
+from app.deps import get_db
+from app.db.models import Event, Run
 from app.services.compliance_report import compliance_service, ComplianceReport
+from app.utils.time import utc_now
 
 router = APIRouter(prefix="/compliance", tags=["compliance"])
 
 
-_demo_events: List[Dict[str, Any]] = [
-    {
-        "id": "evt-001",
-        "timestamp": "2026-02-10T14:30:00Z",
-        "action_type": "move",
-        "approved": True,
-        "risk_score": 0.15,
-        "violations": [],
-    },
-    {
-        "id": "evt-002",
-        "timestamp": "2026-02-10T14:30:05Z",
-        "action_type": "move",
-        "approved": True,
-        "risk_score": 0.52,
-        "violations": [{"policy_id": "speed-limit", "severity": "MEDIUM"}],
-    },
-    {
-        "id": "evt-003",
-        "timestamp": "2026-02-10T14:30:10Z",
-        "action_type": "move",
-        "approved": False,
-        "risk_score": 0.85,
-        "violations": [
-            {"policy_id": "human-presence", "severity": "HIGH"},
-            {"policy_id": "speed-limit", "severity": "HIGH"},
-        ],
-    },
-    {
-        "id": "evt-004",
-        "timestamp": "2026-02-10T14:30:15Z",
-        "action_type": "stop",
-        "approved": True,
-        "risk_score": 0.10,
-        "violations": [],
-    },
-]
+def _load_events_from_db(db: Session, run_id: str) -> List[Dict[str, Any]]:
+    """Load real events from the database and convert to compliance format."""
+    run = db.query(Run).filter(Run.id == run_id).first()
+    if not run:
+        raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
+
+    rows = db.query(Event).filter(Event.run_id == run_id).order_by(Event.ts.asc()).all()
+    events: List[Dict[str, Any]] = []
+    for row in rows:
+        payload = json.loads(row.payload_json)
+        gov = payload.get("governance", {})
+        proposal = payload.get("proposal", {})
+        violations = []
+        for hit in gov.get("policy_hits", []):
+            violations.append({"policy_id": hit, "severity": "HIGH"})
+        events.append({
+            "id": row.id,
+            "timestamp": row.ts.isoformat() if row.ts else "",
+            "action_type": proposal.get("intent", row.type).lower(),
+            "approved": gov.get("decision") == "APPROVED",
+            "risk_score": gov.get("risk_score", 0.0),
+            "violations": violations,
+        })
+    return events
 
 
 def _validate_framework(framework: str) -> None:
@@ -70,15 +62,17 @@ def _validate_framework(framework: str) -> None:
 async def get_compliance_report(
     run_id: str,
     framework: str = Query("ISO_42001", description="Compliance framework"),
+    db: Session = Depends(get_db),
 ) -> ComplianceReport:
     """
     Generate a compliance report for a specific run (JSON).
     """
     _validate_framework(framework)
+    events = _load_events_from_db(db, run_id)
 
     report = compliance_service.generate_report(
         run_id=run_id,
-        events=_demo_events,
+        events=events,
         framework=framework,
     )
     return report
@@ -92,15 +86,17 @@ async def get_compliance_report(
 async def get_compliance_report_text(
     run_id: str,
     framework: str = Query("ISO_42001", description="Compliance framework"),
+    db: Session = Depends(get_db),
 ) -> PlainTextResponse:
     """
     Generate a compliance report for a specific run (plain text summary).
     """
     _validate_framework(framework)
+    events = _load_events_from_db(db, run_id)
 
     report = compliance_service.generate_report(
         run_id=run_id,
-        events=_demo_events,
+        events=events,
         framework=framework,
     )
     summary = compliance_service.export_summary(report)
@@ -111,15 +107,17 @@ async def get_compliance_report_text(
 async def export_compliance_report(
     run_id: str,
     framework: str = Query("ISO_42001"),
+    db: Session = Depends(get_db),
 ) -> JSONResponse:
     """
     Export compliance report as downloadable JSON.
     """
     _validate_framework(framework)
+    events = _load_events_from_db(db, run_id)
 
     report = compliance_service.generate_report(
         run_id=run_id,
-        events=_demo_events,
+        events=events,
         framework=framework,
     )
 
@@ -155,10 +153,11 @@ async def list_frameworks():
 
 
 @router.get("/verify/{run_id}")
-async def verify_audit_chain(run_id: str):
+async def verify_audit_chain(run_id: str, db: Session = Depends(get_db)):
+    events = _load_events_from_db(db, run_id)
     report = compliance_service.generate_report(
         run_id=run_id,
-        events=_demo_events,
+        events=events,
     )
 
     return {
@@ -167,5 +166,5 @@ async def verify_audit_chain(run_id: str):
         "total_entries": len(report.audit_entries),
         "first_hash": report.audit_entries[0].hash[:16] + "..." if report.audit_entries else None,
         "last_hash": report.audit_entries[-1].hash[:16] + "..." if report.audit_entries else None,
-        "verified_at": datetime.utcnow().isoformat() + "Z",
+        "verified_at": utc_now().isoformat() + "Z",
     }

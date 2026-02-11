@@ -23,8 +23,8 @@ class MissionService:
         db.refresh(m)
         return m
 
-    def list(self, db: Session) -> List[Mission]:
-        return db.query(Mission).order_by(Mission.created_at.desc()).all()
+    def list(self, db: Session, limit: int = 50, offset: int = 0) -> List[Mission]:
+        return db.query(Mission).order_by(Mission.created_at.desc()).offset(offset).limit(limit).all()
 
     def get(self, db: Session, mission_id: str) -> Mission | None:
         return db.query(Mission).filter(Mission.id == mission_id).first()

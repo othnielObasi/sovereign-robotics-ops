@@ -112,12 +112,13 @@ class Settings(BaseSettings):
 
     def validate_runtime(self) -> None:
         """Fail fast on missing critical config in production."""
+        import os
         if self.is_production:
             missing = []
-            # Require stable secrets in production
-            if not self.jwt_secret:
+            # Require explicitly-set secrets in production (not auto-generated)
+            if not os.environ.get("JWT_SECRET"):
                 missing.append("JWT_SECRET")
-            if not self.sim_token:
+            if not os.environ.get("SIM_TOKEN"):
                 missing.append("SIM_TOKEN")
             if missing:
                 raise RuntimeError(
