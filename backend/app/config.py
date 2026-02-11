@@ -72,6 +72,12 @@ class Settings(BaseSettings):
     gemini_enabled: bool = False
 
     # ------------------------------------------------------------
+    # LLM / Agent Configuration
+    # ------------------------------------------------------------
+    llm_enabled: bool = False
+    llm_provider: str = "gemini"  # gemini | openai | mock
+
+    # ------------------------------------------------------------
     # Observability
     # ------------------------------------------------------------
     otel_exporter_endpoint: Optional[str] = None
