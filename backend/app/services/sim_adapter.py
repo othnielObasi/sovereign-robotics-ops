@@ -39,5 +39,13 @@ class SimAdapter:
         r.raise_for_status()
         return r.json()
 
+    async def post_scenario(self, scenario: str) -> Dict[str, Any]:
+        """Inject a deterministic scenario into the simulator."""
+        r = await self._client.post(
+            f"{self.base_url}/scenario", json={"scenario": scenario}
+        )
+        r.raise_for_status()
+        return r.json()
+
     async def close(self) -> None:
         await self._client.aclose()

@@ -4,6 +4,7 @@ import json
 from typing import Any, Dict
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.deps import get_db
@@ -16,11 +17,30 @@ router = APIRouter()
 sim = SimAdapter()
 
 
+class ScenarioIn(BaseModel):
+    scenario: str = Field(
+        ..., description="human_approach|human_too_close|path_blocked|clear"
+    )
+
+
 @router.get("/sim/world", response_model=SimWorld)
 async def get_world():
     """Proxy the simulator's world definition (geofence, obstacles, human)."""
     try:
         return await sim.get_world()
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"sim error: {e}")
+
+
+@router.post("/sim/scenario")
+async def trigger_scenario(body: ScenarioIn):
+    """Inject a deterministic scenario into the simulator for demo purposes.
+
+    Valid scenarios: human_approach, human_too_close, path_blocked, clear.
+    """
+    try:
+        result = await sim.post_scenario(body.scenario)
+        return result
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"sim error: {e}")
 

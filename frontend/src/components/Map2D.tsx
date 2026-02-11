@@ -29,13 +29,15 @@ export function Map2D({
   world,
   telemetry,
   pathPoints,
+  planWaypoints,
   showHeatmap = true,
   showTrail = true,
   safetyState = "OK",
 }: {
-  world: World | null;
+  world: any | null;
   telemetry: any | null;
   pathPoints: Array<{ x: number; y: number }> | null;
+  planWaypoints?: Array<{ x: number; y: number; max_speed?: number }> | null;
   showHeatmap?: boolean;
   showTrail?: boolean;
   safetyState?: "OK" | "STOP" | "SLOW" | "REPLAN" | string;
@@ -276,6 +278,44 @@ export function Map2D({
       ctx.stroke();
     }
 
+    // Plan waypoints (numbered, from LLM)
+    if (planWaypoints && planWaypoints.length > 0) {
+      // Draw connecting line
+      ctx.strokeStyle = "#a855f7";
+      ctx.lineWidth = 2;
+      ctx.setLineDash([6, 4]);
+      ctx.beginPath();
+      const startPt = telemetry
+        ? worldToCanvas({ x: Number(telemetry.x ?? 0), y: Number(telemetry.y ?? 0) })
+        : worldToCanvas(planWaypoints[0]);
+      ctx.moveTo(startPt.x, startPt.y);
+      for (const wp of planWaypoints) {
+        const p = worldToCanvas(wp);
+        ctx.lineTo(p.x, p.y);
+      }
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Draw waypoint markers
+      for (let i = 0; i < planWaypoints.length; i++) {
+        const wp = planWaypoints[i];
+        const p = worldToCanvas(wp);
+        // Circle
+        ctx.fillStyle = "#a855f7";
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 8, 0, Math.PI * 2);
+        ctx.fill();
+        // Number
+        ctx.fillStyle = "#ffffff";
+        ctx.font = "bold 10px ui-sans-serif, system-ui";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(String(i + 1), p.x, p.y);
+      }
+      ctx.textAlign = "start";
+      ctx.textBaseline = "alphabetic";
+    }
+
     if (telemetry) {
       const rx = Number(telemetry.x ?? 0);
       const ry = Number(telemetry.y ?? 0);
@@ -328,7 +368,7 @@ export function Map2D({
     ctx.fillStyle = "#374151";
     ctx.font = "12px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto";
     ctx.fillText("Wheel: zoom • Drag: pan", 10, height - 10);
-  }, [world, telemetry, pathPoints, baseScale, zoom, pan, showHeatmap, showTrail, safetyState]);
+  }, [world, telemetry, pathPoints, planWaypoints, baseScale, zoom, pan, showHeatmap, showTrail, safetyState]);
 
   return (
     <div>
@@ -339,7 +379,7 @@ export function Map2D({
         style={{ width: "100%", border: "1px solid #eee", borderRadius: 12, touchAction: "none" }}
       />
       <div style={{ fontSize: 12, color: "#666", marginTop: 8 }}>
-        Blue: path preview • Red: obstacles • Orange: human clearance • Green: target • Black: robot pose • Trail: breadcrumbs
+        Blue: path preview • Red: obstacles • Orange: human clearance • Green: target • Purple: LLM plan • Black: robot pose • Trail: breadcrumbs
       </div>
     </div>
   );

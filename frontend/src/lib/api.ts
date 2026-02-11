@@ -74,3 +74,23 @@ export async function getMission(missionId: string) {
   if (!r.ok) throw new Error("Failed to get mission");
   return r.json();
 }
+
+export async function triggerScenario(scenario: string) {
+  const r = await fetch(`${API_BASE}/sim/scenario`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ scenario }),
+  });
+  if (!r.ok) throw new Error("Failed to trigger scenario");
+  return r.json();
+}
+
+export async function generateLLMPlan(instruction: string, goal?: { x: number; y: number }) {
+  const r = await fetch(`${API_BASE}/llm/plan`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ instruction, goal: goal || null }),
+  });
+  if (!r.ok) throw new Error("Failed to generate LLM plan");
+  return r.json();
+}

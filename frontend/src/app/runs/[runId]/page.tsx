@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { getRun, listEvents, stopRun, getWorld, getPathPreview } from "@/lib/api";
+import { getRun, listEvents, stopRun, getWorld, getPathPreview, triggerScenario, generateLLMPlan } from "@/lib/api";
 import { Map2D } from "@/components/Map2D";
 import { wsUrlForRun } from "@/lib/ws";
 import type { WsMessage } from "@/lib/types";
@@ -57,6 +57,19 @@ export default function RunPage({ params }: { params: { runId: string } }) {
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimer = useRef<any>(null);
 
+  // Fix 2: scenario system
+  const [scenarioLoading, setScenarioLoading] = useState<string | null>(null);
+  const [scenarioToast, setScenarioToast] = useState<string | null>(null);
+
+  // Fix 2: explicit policy_state from WS
+  const [livePolicyState, setLivePolicyState] = useState<string>("SAFE");
+
+  // Fix 3: LLM plan
+  const [llmInstruction, setLlmInstruction] = useState("");
+  const [llmPlan, setLlmPlan] = useState<any>(null);
+  const [llmLoading, setLlmLoading] = useState(false);
+  const [llmError, setLlmError] = useState<string | null>(null);
+
   async function refreshEvents() {
     try {
       const rows = await listEvents(runId);
@@ -90,7 +103,12 @@ export default function RunPage({ params }: { params: { runId: string } }) {
         const msg: WsMessage = JSON.parse(ev.data);
         if (msg.kind === "telemetry") setTelemetry(msg.data);
         if (msg.kind === "alert") setAlerts((a) => [{ ts: Date.now(), ...msg.data }, ...a].slice(0, 20));
-        if (msg.kind === "event") refreshEvents();
+        if (msg.kind === "event") {
+          refreshEvents();
+          // Extract policy_state from governance decision
+          const ps = msg.data?.policy_state || msg.data?.governance?.policy_state;
+          if (ps) setLivePolicyState(ps);
+        }
         if (msg.kind === "status") setStatus(msg.data.status);
         try { ws.send("ping"); } catch {}
       };
@@ -132,6 +150,41 @@ export default function RunPage({ params }: { params: { runId: string } }) {
     setStatus("stopped");
   }
 
+  async function onScenario(scenario: string) {
+    setScenarioLoading(scenario);
+    try {
+      await triggerScenario(scenario);
+      const labels: Record<string, string> = {
+        human_approach: "Human approaching — robot should SLOW",
+        human_too_close: "Human too close — robot should STOP",
+        path_blocked: "Path blocked — robot should REPLAN",
+        clear: "Scenario cleared — back to normal",
+      };
+      setScenarioToast(labels[scenario] || scenario);
+      setTimeout(() => setScenarioToast(null), 4000);
+    } catch (e: any) {
+      setScenarioToast(`Failed: ${e.message}`);
+      setTimeout(() => setScenarioToast(null), 4000);
+    } finally {
+      setScenarioLoading(null);
+    }
+  }
+
+  async function onGeneratePlan() {
+    if (!llmInstruction.trim()) return;
+    setLlmLoading(true);
+    setLlmError(null);
+    setLlmPlan(null);
+    try {
+      const plan = await generateLLMPlan(llmInstruction);
+      setLlmPlan(plan);
+    } catch (e: any) {
+      setLlmError(e.message || "Plan generation failed");
+    } finally {
+      setLlmLoading(false);
+    }
+  }
+
   const lastDecision = useMemo(() => {
     const dec = [...events].reverse().find((e) => e.type === "DECISION");
     return dec?.payload || null;
@@ -139,22 +192,20 @@ export default function RunPage({ params }: { params: { runId: string } }) {
 
   const safety = useMemo(() => {
     const g = lastDecision?.governance;
-    const decision = String(g?.decision || "").toUpperCase();
-    const req = String(g?.required_action || "").toLowerCase();
+    const ps = livePolicyState;
 
-    if (decision === "DENIED") {
-      if (req.includes("replan") || req.includes("reroute") || req.includes("detour")) {
-        return { state: "REPLAN", detail: g?.required_action || "Replan required" };
-      }
-      return { state: "STOP", detail: (g?.reasons?.[0] || "Action denied") as string };
+    if (ps === "STOP") {
+      return { state: "STOP", detail: (g?.reasons?.[0] || "Full stop — safety policy") as string };
     }
-
-    if (req.includes("reduce speed") || req.includes("slow") || req.includes("speed")) {
-      return { state: "SLOW", detail: g?.required_action || "Speed limited by policy" };
+    if (ps === "REPLAN") {
+      return { state: "REPLAN", detail: (g?.required_action || "Replan required") as string };
+    }
+    if (ps === "SLOW") {
+      return { state: "SLOW", detail: (g?.required_action || "Speed limited by policy") as string };
     }
 
     return { state: "OK", detail: "Within policy" };
-  }, [lastDecision]);
+  }, [lastDecision, livePolicyState]);
 
   const currentStatus = status || run?.status || "—";
 
@@ -207,9 +258,9 @@ export default function RunPage({ params }: { params: { runId: string } }) {
               </label>
             </div>
           </div>
-          <Map2D world={world} telemetry={telemetry} pathPoints={pathPoints} showHeatmap={showHeatmap} showTrail={showTrail} safetyState={safety.state} />
+          <Map2D world={world} telemetry={telemetry} pathPoints={pathPoints} planWaypoints={llmPlan?.waypoints || null} showHeatmap={showHeatmap} showTrail={showTrail} safetyState={safety.state} />
           <p className="text-[10px] text-slate-500 mt-2">
-            Blue: path preview &bull; Red: obstacles &bull; Orange: human clearance &bull; Green: target &bull; Black: robot pose &bull; Trail: breadcrumbs
+            Blue: path preview &bull; Red: obstacles &bull; Orange: human clearance &bull; Green: target &bull; Purple: LLM plan &bull; Black: robot pose &bull; Trail: breadcrumbs
           </p>
         </Card>
 
@@ -224,6 +275,125 @@ export default function RunPage({ params }: { params: { runId: string } }) {
 {JSON.stringify(telemetry, null, 2)}
             </pre>
           )}
+        </Card>
+      </div>
+
+      {/* Middle Row: Scenario Triggers + LLM Panel */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+        {/* Scenario Triggers (Fix 2) */}
+        <Card title="Scenario Triggers">
+          <p className="text-xs text-slate-500 mb-3">Inject deterministic scenarios to demonstrate governance intervention.</p>
+          {scenarioToast && (
+            <div className="mb-3 px-3 py-2 rounded-lg bg-cyan-500/20 border border-cyan-500/30 text-sm text-cyan-300 animate-pulse">
+              {scenarioToast}
+            </div>
+          )}
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              onClick={() => onScenario("human_approach")}
+              disabled={!!scenarioLoading || currentStatus === "stopped"}
+              className="bg-yellow-500/20 hover:bg-yellow-500/30 border border-yellow-500/30 text-yellow-300 text-sm font-medium px-3 py-2.5 rounded-lg transition disabled:opacity-40"
+            >
+              {scenarioLoading === "human_approach" ? "..." : "🚶 Human Approach"}
+            </button>
+            <button
+              onClick={() => onScenario("human_too_close")}
+              disabled={!!scenarioLoading || currentStatus === "stopped"}
+              className="bg-red-500/20 hover:bg-red-500/30 border border-red-500/30 text-red-300 text-sm font-medium px-3 py-2.5 rounded-lg transition disabled:opacity-40"
+            >
+              {scenarioLoading === "human_too_close" ? "..." : "🛑 Human Too Close"}
+            </button>
+            <button
+              onClick={() => onScenario("path_blocked")}
+              disabled={!!scenarioLoading || currentStatus === "stopped"}
+              className="bg-blue-500/20 hover:bg-blue-500/30 border border-blue-500/30 text-blue-300 text-sm font-medium px-3 py-2.5 rounded-lg transition disabled:opacity-40"
+            >
+              {scenarioLoading === "path_blocked" ? "..." : "🚧 Path Blocked"}
+            </button>
+            <button
+              onClick={() => onScenario("clear")}
+              disabled={!!scenarioLoading || currentStatus === "stopped"}
+              className="bg-green-500/20 hover:bg-green-500/30 border border-green-500/30 text-green-300 text-sm font-medium px-3 py-2.5 rounded-lg transition disabled:opacity-40"
+            >
+              {scenarioLoading === "clear" ? "..." : "✅ Clear Scenario"}
+            </button>
+          </div>
+        </Card>
+
+        {/* LLM Plan Panel (Fix 3) */}
+        <Card title="Gemini LLM Planner">
+          <div className="space-y-3">
+            <div>
+              <label className="text-xs text-slate-400 block mb-1">Instruction for the robot</label>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={llmInstruction}
+                  onChange={(e) => setLlmInstruction(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && onGeneratePlan()}
+                  placeholder="Navigate to loading bay avoiding obstacles"
+                  className="flex-1 bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-purple-500"
+                />
+                <button
+                  onClick={onGeneratePlan}
+                  disabled={llmLoading || !llmInstruction.trim()}
+                  className="bg-purple-500 hover:bg-purple-600 disabled:bg-slate-600 text-white text-sm font-semibold px-4 py-2 rounded-lg transition"
+                >
+                  {llmLoading ? "Planning..." : "Plan"}
+                </button>
+              </div>
+            </div>
+
+            {llmError && (
+              <div className="text-sm text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg p-2">
+                {llmError}
+              </div>
+            )}
+
+            {llmPlan && (
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
+                    llmPlan.all_approved
+                      ? "bg-green-500/20 text-green-400 border border-green-500/30"
+                      : "bg-yellow-500/20 text-yellow-400 border border-yellow-500/30"
+                  }`}>
+                    {llmPlan.all_approved ? "All Waypoints Approved" : "Some Waypoints Flagged"}
+                  </span>
+                  <span className="text-xs text-slate-500">
+                    {llmPlan.waypoints?.length || 0} waypoints • ~{(llmPlan.estimated_time_s || 0).toFixed(0)}s
+                  </span>
+                </div>
+
+                <div className="bg-slate-900/60 rounded-lg p-3">
+                  <div className="text-xs text-slate-400 mb-1">Rationale</div>
+                  <div className="text-sm text-purple-300">{llmPlan.rationale}</div>
+                </div>
+
+                <div className="space-y-1.5">
+                  {(llmPlan.waypoints || []).map((wp: any, i: number) => {
+                    const gov = llmPlan.governance?.[i];
+                    const ok = gov?.decision === "APPROVED";
+                    return (
+                      <div key={i} className={`flex items-center gap-2 text-xs p-2 rounded-lg ${
+                        ok ? "bg-green-500/10 border border-green-500/20" : "bg-yellow-500/10 border border-yellow-500/20"
+                      }`}>
+                        <span className="font-bold text-purple-400 w-5 text-center">{i + 1}</span>
+                        <span className="text-slate-300">({wp.x.toFixed(1)}, {wp.y.toFixed(1)})</span>
+                        <span className="text-slate-500">@{wp.max_speed.toFixed(1)} m/s</span>
+                        <span className={`ml-auto font-semibold ${ok ? "text-green-400" : "text-yellow-400"}`}>
+                          {gov?.decision || "—"}
+                        </span>
+                        {gov?.policy_hits?.length > 0 && (
+                          <span className="text-slate-500 font-mono">{gov.policy_hits.join(", ")}</span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
         </Card>
       </div>
 

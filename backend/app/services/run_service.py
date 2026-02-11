@@ -182,6 +182,7 @@ class RunService:
                                 "proposal": proposal_payload,
                                 "governance": gov_payload,
                                 "execution": execution,
+                                "policy_state": gov_payload.get("policy_state", "SAFE"),
                             }
                         })
 
@@ -199,7 +200,7 @@ class RunService:
                 finally:
                     db.close()
 
-                await asyncio.sleep(0.5)
+                await asyncio.sleep(0.1)
 
         except Exception as e:
             logger.exception("Run loop crashed: %s", e)

@@ -18,17 +18,24 @@ MIN_HUMAN_CONF = 0.65
 MAX_SPEED_NEAR_HUMAN = 0.4
 MIN_CONF_FOR_MOVE = 0.55
 
+# Distance-based human proximity thresholds (Fix 2)
+HUMAN_SLOW_RADIUS_M = 3.0   # slow down when human within this range
+HUMAN_STOP_RADIUS_M = 1.5   # full stop when human within this range
+
 REVIEW_RISK_THRESHOLD = 0.75
 
 
 def evaluate_policies(telemetry: Dict[str, Any], proposal: ActionProposal) -> GovernanceDecision:
     """Evaluate a proposal against a small policy set.
 
-    Returns an APPROVED / DENIED / NEEDS_REVIEW decision with reasons.
+    Returns an APPROVED / DENIED / NEEDS_REVIEW decision with reasons
+    and an explicit policy_state (SAFE / SLOW / STOP / REPLAN).
     """
     policy_hits: List[str] = []
     reasons: List[str] = []
     required_action: str | None = None
+    # Explicit safety state for the UI
+    policy_state: str = "SAFE"
 
     # Risk score is a simple heuristic (0..1) for demo purposes
     risk_score = 0.0
@@ -39,6 +46,7 @@ def evaluate_policies(telemetry: Dict[str, Any], proposal: ActionProposal) -> Go
     nearest_obstacle_m = float(telemetry.get("nearest_obstacle_m", 999.0))
     human_detected = bool(telemetry.get("human_detected", False))
     human_conf = float(telemetry.get("human_conf", 0.0))
+    human_distance_m = float(telemetry.get("human_distance_m", 999.0))
 
     intent = proposal.intent
     params = proposal.params or {}
@@ -49,6 +57,7 @@ def evaluate_policies(telemetry: Dict[str, Any], proposal: ActionProposal) -> Go
         policy_hits.append("GEOFENCE_01")
         reasons.append(f"Robot out of geofence at ({x:.2f},{y:.2f}).")
         risk_score = max(risk_score, 0.95)
+        policy_state = "STOP"
 
     # Also check proposed destination
     if intent == "MOVE_TO":
@@ -59,13 +68,35 @@ def evaluate_policies(telemetry: Dict[str, Any], proposal: ActionProposal) -> Go
                 policy_hits.append("GEOFENCE_01")
             reasons.append(f"Proposed destination ({dest_x:.2f},{dest_y:.2f}) is outside geofence.")
             risk_score = max(risk_score, 0.95)
+            policy_state = "STOP"
 
     # --- OBSTACLE_CLEARANCE_03 ---
     if intent == "MOVE_TO" and nearest_obstacle_m < MIN_OBSTACLE_CLEARANCE_M:
         policy_hits.append("OBSTACLE_CLEARANCE_03")
         reasons.append(f"Obstacle clearance too low: {nearest_obstacle_m:.2f}m < {MIN_OBSTACLE_CLEARANCE_M:.2f}m.")
-        required_action = "Stop or replan with safer clearance."
+        required_action = "Stop and replan with safer clearance."
         risk_score = max(risk_score, 0.9)
+        policy_state = "REPLAN"
+
+    # --- HUMAN_PROXIMITY_02 (distance-based, Fix 2) ---
+    if intent == "MOVE_TO" and human_detected and human_distance_m < HUMAN_STOP_RADIUS_M:
+        policy_hits.append("HUMAN_PROXIMITY_02")
+        reasons.append(
+            f"Human too close: {human_distance_m:.2f}m < stop radius {HUMAN_STOP_RADIUS_M:.1f}m. Full stop required."
+        )
+        required_action = "Full stop — human within safety perimeter."
+        risk_score = max(risk_score, 0.95)
+        policy_state = "STOP"
+
+    elif intent == "MOVE_TO" and human_detected and human_distance_m < HUMAN_SLOW_RADIUS_M:
+        policy_hits.append("HUMAN_PROXIMITY_02")
+        reasons.append(
+            f"Human nearby: {human_distance_m:.2f}m < slow radius {HUMAN_SLOW_RADIUS_M:.1f}m. Reduce speed."
+        )
+        required_action = f"Reduce speed to <= {MAX_SPEED_NEAR_HUMAN:.2f} while human is within {HUMAN_SLOW_RADIUS_M:.1f}m."
+        risk_score = max(risk_score, 0.80)
+        if policy_state == "SAFE":
+            policy_state = "SLOW"
 
     # --- UNCERTAINTY_04 ---
     if intent == "MOVE_TO" and human_detected and human_conf < MIN_HUMAN_CONF:
@@ -73,6 +104,8 @@ def evaluate_policies(telemetry: Dict[str, Any], proposal: ActionProposal) -> Go
         reasons.append(f"Human detected but confidence too low: {human_conf:.2f} < {MIN_HUMAN_CONF:.2f}.")
         required_action = "Slow down and request operator review; improve perception confidence."
         risk_score = max(risk_score, 0.8)
+        if policy_state == "SAFE":
+            policy_state = "SLOW"
 
     # --- SAFE_SPEED_01 ---
     if intent == "MOVE_TO":
@@ -82,14 +115,19 @@ def evaluate_policies(telemetry: Dict[str, Any], proposal: ActionProposal) -> Go
             reasons.append(f"Speed too high for zone '{zone}': {max_speed:.2f} > {limit:.2f}.")
             required_action = f"Reduce max_speed to <= {limit:.2f}."
             risk_score = max(risk_score, 0.85)
+            if policy_state == "SAFE":
+                policy_state = "SLOW"
 
-    # --- HUMAN_CLEARANCE_02 ---
+    # --- HUMAN_CLEARANCE_02 (confidence-based, legacy) ---
     if intent == "MOVE_TO" and human_detected and human_conf >= MIN_HUMAN_CONF:
         if max_speed > MAX_SPEED_NEAR_HUMAN:
-            policy_hits.append("HUMAN_CLEARANCE_02")
+            if "HUMAN_PROXIMITY_02" not in policy_hits:
+                policy_hits.append("HUMAN_CLEARANCE_02")
             reasons.append(f"Human nearby (conf={human_conf:.2f}); max_speed {max_speed:.2f} too high.")
             required_action = f"Reduce max_speed to <= {MAX_SPEED_NEAR_HUMAN:.2f} near humans."
             risk_score = max(risk_score, 0.88)
+            if policy_state == "SAFE":
+                policy_state = "SLOW"
 
     # --- MIN_CONF_FOR_MOVE (part of uncertainty) ---
     if intent == "MOVE_TO" and telemetry.get("human_detected") and human_conf < MIN_CONF_FOR_MOVE:
@@ -110,6 +148,7 @@ def evaluate_policies(telemetry: Dict[str, Any], proposal: ActionProposal) -> Go
                 reasons=reasons,
                 required_action=required_action,
                 risk_score=risk_score,
+                policy_state=policy_state,
             )
         return GovernanceDecision(
             decision="DENIED",
@@ -117,6 +156,7 @@ def evaluate_policies(telemetry: Dict[str, Any], proposal: ActionProposal) -> Go
             reasons=reasons,
             required_action=required_action,
             risk_score=risk_score,
+            policy_state=policy_state,
         )
 
     return GovernanceDecision(
@@ -125,4 +165,5 @@ def evaluate_policies(telemetry: Dict[str, Any], proposal: ActionProposal) -> Go
         reasons=[],
         required_action=None,
         risk_score=risk_score,
+        policy_state="SAFE",
     )
