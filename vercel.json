@@ -3,6 +3,7 @@
   "framework": "nextjs",
   "buildCommand": "npm run build",
   "env": {
-    "NEXT_PUBLIC_API_BASE": "https://sro-ops.fly.dev"
+    "NEXT_PUBLIC_API_BASE": "https://sovereign-robotics-ops.fly.dev"
   }
 }
+
