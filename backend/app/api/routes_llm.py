@@ -67,7 +67,7 @@ class ExecutionStep(BaseModel):
 
 
 class ExecuteResponse(BaseModel):
-    status: str  # "completed" | "blocked" | "partial"
+    status: str  # "completed" | "completed_with_warnings" | "blocked" | "partial"
     instruction: str
     rationale: str
     steps: List[ExecutionStep]
@@ -195,8 +195,8 @@ async def execute_plan(body: ExecuteRequest):
             "governance": gov.model_dump(),
         })
 
-        if gov.decision == "APPROVED":
-            # Execute on simulator
+        if gov.decision != "DENIED":
+            # APPROVED or NEEDS_REVIEW — execute (NEEDS_REVIEW is a warning, not a block)
             cmd = {"intent": "MOVE_TO", "params": proposal.params}
             try:
                 result = await _sim.send_command(cmd)
@@ -214,11 +214,15 @@ async def execute_plan(body: ExecuteRequest):
                 step.telemetry_after = await _sim.get_telemetry()
             except Exception:
                 pass
+
+            # If NEEDS_REVIEW, note it but continue
+            if gov.decision == "NEEDS_REVIEW" and overall_status == "completed":
+                overall_status = "completed_with_warnings"
         else:
-            # Governance blocked this waypoint
+            # DENIED — governance hard-blocks this waypoint
             overall_status = "blocked" if idx == 0 else "partial"
             steps.append(step)
-            break  # Stop at first blocked waypoint
+            break  # Stop at first denied waypoint
 
         steps.append(step)
 

@@ -428,13 +428,13 @@ export default function RunPage({ params }: { params: { runId: string } }) {
                   <div className="mt-2 space-y-2">
                     <div className="flex items-center gap-2">
                       <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
-                        llmExecResult.status === "completed"
+                        llmExecResult.status === "completed" || llmExecResult.status === "completed_with_warnings"
                           ? "bg-green-500/20 text-green-400 border border-green-500/30"
                           : llmExecResult.status === "blocked"
                           ? "bg-red-500/20 text-red-400 border border-red-500/30"
                           : "bg-yellow-500/20 text-yellow-400 border border-yellow-500/30"
                       }`}>
-                        Execution: {llmExecResult.status?.toUpperCase()}
+                        Execution: {llmExecResult.status === "completed_with_warnings" ? "COMPLETED (WARNINGS)" : llmExecResult.status?.toUpperCase()}
                       </span>
                     </div>
 
