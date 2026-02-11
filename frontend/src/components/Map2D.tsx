@@ -2,8 +2,6 @@
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
-type World = any;
-
 function clamp(v: number, a: number, b: number) {
   return Math.max(a, Math.min(b, v));
 }
@@ -11,19 +9,41 @@ function clamp(v: number, a: number, b: number) {
 type Pt = { x: number; y: number };
 
 function dist(a: Pt, b: Pt) {
-  const dx = a.x - b.x;
-  const dy = a.y - b.y;
-  return Math.sqrt(dx * dx + dy * dy);
+  return Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2);
 }
 
+/* ── Colour palette ────────────────────────────────────────────── */
+const C = {
+  floor: "#1a1f2e",
+  floorAisle: "#1e2436",
+  floorBay: "#1a2a1f",
+  gridLine: "rgba(100,116,139,0.12)",
+  gridMajor: "rgba(100,116,139,0.25)",
+  border: "#334155",
+  shelf: "#374151",
+  shelfTop: "#4b5563",
+  obstacle: "#dc2626",
+  obsBorder: "#991b1b",
+  human: "#f59e0b",
+  humanDanger: "rgba(239,68,68,0.20)",
+  humanCaution: "rgba(245,158,11,0.10)",
+  robot: "#06b6d4",
+  robotDark: "#0e7490",
+  robotGlow: "rgba(6,182,212,0.25)",
+  path: "#3b82f6",
+  target: "#10b981",
+  plan: "#a855f7",
+  zoneLabel: "rgba(148,163,184,0.50)",
+  text: "#cbd5e1",
+  textDim: "#64748b",
+};
+
 /**
- * 2D operator map for a simulated robotics environment.
+ * Warehouse-style 2D operator map.
  *
- * Upgrades:
- * - Zoom + pan (mouse wheel / trackpad; drag to pan)
- * - Risk heatmap (lightweight distance-based field)
- * - Trailing path history (robot breadcrumb trail)
- * - Safety indicators (STOP / SLOW / REPLAN overlay)
+ * Dark floor, zone differentiation, shelf racks, risk heatmap,
+ * robot with heading + safety radius, human with proximity rings,
+ * obstacle crates, path preview, LLM plan waypoints, trail, HUD.
  */
 export function Map2D({
   world,
@@ -36,387 +56,680 @@ export function Map2D({
 }: {
   world: any | null;
   telemetry: any | null;
-  pathPoints: Array<{ x: number; y: number }> | null;
-  planWaypoints?: Array<{ x: number; y: number; max_speed?: number }> | null;
+  pathPoints: Array<Pt> | null;
+  planWaypoints?: Array<Pt & { max_speed?: number }> | null;
   showHeatmap?: boolean;
   showTrail?: boolean;
-  safetyState?: "OK" | "STOP" | "SLOW" | "REPLAN" | string;
+  safetyState?: string;
 }) {
   const ref = useRef<HTMLCanvasElement | null>(null);
+  const W = 600,
+    H = 380;
 
-  const width = 520;
-  const height = 320;
-
-  const geo = world?.geofence || { min_x: 0, max_x: 30, min_y: 0, max_y: 20 };
-  const obstacles = world?.obstacles || [];
-  const human = world?.human || null;
+  const geo = world?.geofence ?? { min_x: 0, max_x: 30, min_y: 0, max_y: 20 };
+  const zones: any[] = world?.zones ?? [];
+  const obstacles: any[] = world?.obstacles ?? [];
+  const human = world?.human ?? null;
 
   const baseScale = useMemo(() => {
     const wx = (geo.max_x - geo.min_x) || 1;
     const wy = (geo.max_y - geo.min_y) || 1;
-    return Math.min(width / wx, height / wy);
-  }, [geo, width, height]);
+    return Math.min((W - 40) / wx, (H - 40) / wy);
+  }, [geo]);
 
-  const [zoom, setZoom] = useState<number>(1);
-  const [pan, setPan] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const pad = useMemo(
+    () => ({
+      x: (W - (geo.max_x - geo.min_x) * baseScale) / 2,
+      y: (H - (geo.max_y - geo.min_y) * baseScale) / 2,
+    }),
+    [baseScale, geo],
+  );
+
+  const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [tick, setTick] = useState(0);
 
   const dragging = useRef(false);
-  const lastMouse = useRef<{ x: number; y: number } | null>(null);
-
+  const lastMouse = useRef<Pt | null>(null);
   const trailRef = useRef<Pt[]>([]);
 
-  function worldToCanvas(p: Pt) {
-    const sx = (p.x - geo.min_x) * baseScale;
-    const sy = height - (p.y - geo.min_y) * baseScale;
-    const z = zoom;
-    return { x: sx * z + pan.x, y: sy * z + pan.y };
-  }
-
-  function canvasToWorld(px: Pt) {
-    const z = zoom;
-    const sx = (px.x - pan.x) / Math.max(z, 1e-6);
-    const sy = (px.y - pan.y) / Math.max(z, 1e-6);
-    const wx = sx / baseScale + geo.min_x;
-    const wy = ((height - sy) / baseScale) + geo.min_y;
-    return { x: wx, y: wy };
-  }
-
+  /* pulse timer */
   useEffect(() => {
-    const canvas = ref.current;
-    if (!canvas) return;
+    const id = setInterval(() => setTick((t) => t + 1), 60);
+    return () => clearInterval(id);
+  }, []);
 
-    function onWheel(e: WheelEvent) {
+  /* ── Coordinate helpers ────────────────────────────────────── */
+  function w2c(p: Pt) {
+    const sx = pad.x + (p.x - geo.min_x) * baseScale;
+    const sy = H - pad.y - (p.y - geo.min_y) * baseScale;
+    return { x: sx * zoom + pan.x, y: sy * zoom + pan.y };
+  }
+  function c2w(p: Pt) {
+    const sx = (p.x - pan.x) / Math.max(zoom, 1e-6);
+    const sy = (p.y - pan.y) / Math.max(zoom, 1e-6);
+    return {
+      x: (sx - pad.x) / baseScale + geo.min_x,
+      y: (H - pad.y - sy) / baseScale + geo.min_y,
+    };
+  }
+
+  /* ── Pointer interactions (zoom + pan) ────────────────────── */
+  useEffect(() => {
+    const cv = ref.current;
+    if (!cv) return;
+    const onWheel = (e: WheelEvent) => {
       e.preventDefault();
-      const rect = canvas.getBoundingClientRect();
-      const cx = e.clientX - rect.left;
-      const cy = e.clientY - rect.top;
-
-      const factor = e.deltaY > 0 ? 0.9 : 1.1;
-
-      const before = canvasToWorld({ x: cx, y: cy });
-      const nextZoom = clamp(zoom * factor, 0.6, 6);
-
-      setZoom(nextZoom);
-
-      const sx = (before.x - geo.min_x) * baseScale;
-      const sy = height - (before.y - geo.min_y) * baseScale;
-      setPan({ x: cx - sx * nextZoom, y: cy - sy * nextZoom });
-    }
-
-    function onPointerDown(e: PointerEvent) {
+      const r = cv.getBoundingClientRect();
+      const cx = e.clientX - r.left;
+      const cy = e.clientY - r.top;
+      const f = e.deltaY > 0 ? 0.9 : 1.1;
+      const before = c2w({ x: cx, y: cy });
+      const nz = clamp(zoom * f, 0.6, 6);
+      setZoom(nz);
+      const sx = pad.x + (before.x - geo.min_x) * baseScale;
+      const sy = H - pad.y - (before.y - geo.min_y) * baseScale;
+      setPan({ x: cx - sx * nz, y: cy - sy * nz });
+    };
+    const onDown = (e: PointerEvent) => {
       dragging.current = true;
       lastMouse.current = { x: e.clientX, y: e.clientY };
-      canvas.setPointerCapture(e.pointerId);
-    }
-
-    function onPointerMove(e: PointerEvent) {
+      cv.setPointerCapture(e.pointerId);
+    };
+    const onMove = (e: PointerEvent) => {
       if (!dragging.current || !lastMouse.current) return;
       const dx = e.clientX - lastMouse.current.x;
       const dy = e.clientY - lastMouse.current.y;
       lastMouse.current = { x: e.clientX, y: e.clientY };
       setPan((p) => ({ x: p.x + dx, y: p.y + dy }));
-    }
-
-    function onPointerUp(e: PointerEvent) {
+    };
+    const onUp = (e: PointerEvent) => {
       dragging.current = false;
       lastMouse.current = null;
-      try { canvas.releasePointerCapture(e.pointerId); } catch {}
-    }
-
-    canvas.addEventListener("wheel", onWheel, { passive: false });
-    canvas.addEventListener("pointerdown", onPointerDown);
-    canvas.addEventListener("pointermove", onPointerMove);
-    canvas.addEventListener("pointerup", onPointerUp);
-    canvas.addEventListener("pointercancel", onPointerUp);
-
-    return () => {
-      canvas.removeEventListener("wheel", onWheel as any);
-      canvas.removeEventListener("pointerdown", onPointerDown as any);
-      canvas.removeEventListener("pointermove", onPointerMove as any);
-      canvas.removeEventListener("pointerup", onPointerUp as any);
-      canvas.removeEventListener("pointercancel", onPointerUp as any);
+      try { cv.releasePointerCapture(e.pointerId); } catch {}
     };
-  }, [zoom, baseScale, geo.min_x, geo.min_y]);
+    cv.addEventListener("wheel", onWheel, { passive: false });
+    cv.addEventListener("pointerdown", onDown);
+    cv.addEventListener("pointermove", onMove);
+    cv.addEventListener("pointerup", onUp);
+    cv.addEventListener("pointercancel", onUp);
+    return () => {
+      cv.removeEventListener("wheel", onWheel as any);
+      cv.removeEventListener("pointerdown", onDown as any);
+      cv.removeEventListener("pointermove", onMove as any);
+      cv.removeEventListener("pointerup", onUp as any);
+      cv.removeEventListener("pointercancel", onUp as any);
+    };
+  }, [zoom, baseScale, geo.min_x, geo.min_y, pad]);
 
+  /* ── Trail accumulation ────────────────────────────────────── */
   useEffect(() => {
     if (!telemetry) return;
-    const rx = Number(telemetry.x ?? 0);
-    const ry = Number(telemetry.y ?? 0);
-    const next = { x: rx, y: ry };
-
-    const trail = trailRef.current;
-    const last = trail.length ? trail[trail.length - 1] : null;
+    const next = { x: Number(telemetry.x ?? 0), y: Number(telemetry.y ?? 0) };
+    const t = trailRef.current;
+    const last = t.length ? t[t.length - 1] : null;
     if (!last || dist(last, next) > 0.03) {
-      trail.push(next);
-      if (trail.length > 240) trail.splice(0, trail.length - 240);
+      t.push(next);
+      if (t.length > 300) t.splice(0, t.length - 300);
     }
   }, [telemetry]);
 
-  function drawHeatmap(ctx: CanvasRenderingContext2D) {
-    const grid = 18;
-    const maxX = width;
-    const maxY = height;
-
-    const bump = (d: number, r: number, w: number) => {
-      const x = (r - d) / Math.max(w, 1e-6);
-      if (x <= 0) return 0;
-      return clamp(x, 0, 1);
-    };
-
-    for (let y = 0; y < maxY; y += grid) {
-      for (let x = 0; x < maxX; x += grid) {
-        const wpt = canvasToWorld({ x: x + grid / 2, y: y + grid / 2 });
-
-        let risk = 0;
-
-        if (human && typeof human.x === "number" && typeof human.y === "number") {
-          const d = dist(wpt, { x: Number(human.x), y: Number(human.y) });
-          risk += 1.2 * bump(d, 2.0, 1.0);
-        }
-
-        for (const ob of obstacles) {
-          const ox = Number(ob.x ?? 0);
-          const oy = Number(ob.y ?? 0);
-          const r = Number(ob.r ?? ob.radius ?? 0.4);
-          const d = dist(wpt, { x: ox, y: oy }) - r;
-          risk += 0.6 * bump(d, 1.1, 0.9);
-        }
-
-        const dEdge = Math.min(
-          Math.abs(wpt.x - geo.min_x),
-          Math.abs(geo.max_x - wpt.x),
-          Math.abs(wpt.y - geo.min_y),
-          Math.abs(geo.max_y - wpt.y)
-        );
-        risk += 0.45 * bump(dEdge, 0.6, 0.6);
-
-        risk = clamp(risk, 0, 1);
-        if (risk < 0.05) continue;
-
-        ctx.fillStyle = `rgba(239, 68, 68, ${0.08 + 0.35 * risk})`;
-        ctx.fillRect(x, y, grid, grid);
-      }
-    }
-  }
-
+  /* ════════════════════════════════════════════════════════════ */
+  /*  MAIN DRAW                                                  */
+  /* ════════════════════════════════════════════════════════════ */
   useEffect(() => {
-    const c = ref.current;
-    if (!c) return;
-    const ctx = c.getContext("2d");
+    const cv = ref.current;
+    if (!cv) return;
+    const ctx = cv.getContext("2d");
     if (!ctx) return;
+    const pulse = Math.sin(tick * 0.12) * 0.5 + 0.5;
 
-    ctx.clearRect(0, 0, width, height);
+    /* background */
+    ctx.fillStyle = C.floor;
+    ctx.fillRect(0, 0, W, H);
 
-    ctx.fillStyle = "#ffffff";
-    ctx.fillRect(0, 0, width, height);
+    /* ── zones ──────────────────────────────────────────────── */
+    for (const z of zones) {
+      const r = z.rect;
+      if (!r) continue;
+      const tl = w2c({ x: r.min_x, y: r.max_y });
+      const br = w2c({ x: r.max_x, y: r.min_y });
+      const zw = br.x - tl.x,
+        zh = br.y - tl.y;
 
-    if (showHeatmap) drawHeatmap(ctx);
-
-    const gf0 = worldToCanvas({ x: geo.min_x, y: geo.min_y });
-    const gf1 = worldToCanvas({ x: geo.max_x, y: geo.max_y });
-    const left = Math.min(gf0.x, gf1.x);
-    const right = Math.max(gf0.x, gf1.x);
-    const top = Math.min(gf0.y, gf1.y);
-    const bottom = Math.max(gf0.y, gf1.y);
-
-    ctx.strokeStyle = "#111827";
-    ctx.lineWidth = 2;
-    ctx.strokeRect(left, top, right - left, bottom - top);
-
-    if (showTrail) {
-      const trail = trailRef.current;
-      if (trail.length >= 2) {
-        ctx.strokeStyle = "rgba(17, 24, 39, 0.35)";
+      if (z.name === "loading_bay") {
+        ctx.fillStyle = C.floorBay;
+        ctx.fillRect(tl.x, tl.y, zw, zh);
+        ctx.save();
+        ctx.setLineDash([8, 6]);
+        ctx.strokeStyle = "rgba(245,158,11,0.3)";
         ctx.lineWidth = 2;
         ctx.beginPath();
-        const first = worldToCanvas(trail[0]);
-        ctx.moveTo(first.x, first.y);
-        for (let i = 1; i < trail.length; i++) {
-          const p = worldToCanvas(trail[i]);
-          ctx.lineTo(p.x, p.y);
-        }
+        ctx.moveTo(tl.x, tl.y);
+        ctx.lineTo(br.x, tl.y);
+        ctx.stroke();
+        ctx.restore();
+      } else {
+        ctx.fillStyle = C.floorAisle;
+        ctx.fillRect(tl.x, tl.y, zw, zh);
+      }
+      ctx.fillStyle = C.zoneLabel;
+      ctx.font = `bold ${Math.max(10, 12 * zoom)}px system-ui`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(z.name.toUpperCase().replace("_", " "), tl.x + zw / 2, tl.y + zh / 2);
+    }
+
+    /* ── grid ───────────────────────────────────────────────── */
+    for (let wx = Math.ceil(geo.min_x); wx <= geo.max_x; wx++) {
+      const p = w2c({ x: wx, y: 0 });
+      ctx.strokeStyle = wx % 5 === 0 ? C.gridMajor : C.gridLine;
+      ctx.lineWidth = wx % 5 === 0 ? 1 : 0.5;
+      ctx.beginPath();
+      ctx.moveTo(p.x, 0);
+      ctx.lineTo(p.x, H);
+      ctx.stroke();
+    }
+    for (let wy = Math.ceil(geo.min_y); wy <= geo.max_y; wy++) {
+      const p = w2c({ x: 0, y: wy });
+      ctx.strokeStyle = wy % 5 === 0 ? C.gridMajor : C.gridLine;
+      ctx.lineWidth = wy % 5 === 0 ? 1 : 0.5;
+      ctx.beginPath();
+      ctx.moveTo(0, p.y);
+      ctx.lineTo(W, p.y);
+      ctx.stroke();
+    }
+
+    /* axis labels */
+    ctx.fillStyle = C.textDim;
+    ctx.font = `${Math.max(8, 9 * zoom)}px monospace`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "top";
+    for (let wx = 0; wx <= geo.max_x; wx += 5) {
+      const p = w2c({ x: wx, y: geo.min_y });
+      ctx.fillText(`${wx}m`, p.x, Math.min(p.y + 4, H - 12));
+    }
+    ctx.textAlign = "right";
+    ctx.textBaseline = "middle";
+    for (let wy = 0; wy <= geo.max_y; wy += 5) {
+      const p = w2c({ x: geo.min_x, y: wy });
+      ctx.fillText(`${wy}m`, Math.max(p.x - 4, 24), p.y);
+    }
+
+    /* ── shelf racks ────────────────────────────────────────── */
+    const shelves = [
+      { x1: 2, x2: 8, y: 11 },
+      { x1: 12, x2: 17, y: 11 },
+      { x1: 24, x2: 28, y: 11 },
+      { x1: 3, x2: 7, y: 1 },
+      { x1: 14, x2: 19, y: 1 },
+      { x1: 24, x2: 29, y: 1 },
+    ];
+    for (const s of shelves) {
+      const tl = w2c({ x: s.x1, y: s.y + 0.6 });
+      const br = w2c({ x: s.x2, y: s.y });
+      const sw = br.x - tl.x,
+        sh = br.y - tl.y;
+      ctx.fillStyle = C.shelf;
+      ctx.strokeStyle = C.shelfTop;
+      ctx.lineWidth = 1;
+      ctx.fillRect(tl.x, tl.y, sw, sh);
+      ctx.strokeRect(tl.x, tl.y, sw, sh);
+      const segs = Math.floor((s.x2 - s.x1) / 1.5);
+      for (let i = 1; i < segs; i++) {
+        const sx = s.x1 + (i * (s.x2 - s.x1)) / segs;
+        const sp = w2c({ x: sx, y: s.y });
+        ctx.strokeStyle = "rgba(100,116,139,0.3)";
+        ctx.beginPath();
+        ctx.moveTo(sp.x, tl.y);
+        ctx.lineTo(sp.x, tl.y + sh);
         ctx.stroke();
       }
     }
 
-    ctx.fillStyle = "#ef4444";
-    for (const ob of obstacles) {
-      const ox = Number(ob.x ?? 0);
-      const oy = Number(ob.y ?? 0);
-      const r = Number(ob.r ?? ob.radius ?? 0.4);
-      const p = worldToCanvas({ x: ox, y: oy });
-      const rr = Math.max(3, r * baseScale * zoom);
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, rr, 0, Math.PI * 2);
-      ctx.fill();
+    /* ── geofence border ────────────────────────────────────── */
+    const gf0 = w2c({ x: geo.min_x, y: geo.max_y });
+    const gf1 = w2c({ x: geo.max_x, y: geo.min_y });
+    ctx.strokeStyle = C.border;
+    ctx.lineWidth = 2;
+    ctx.strokeRect(gf0.x, gf0.y, gf1.x - gf0.x, gf1.y - gf0.y);
+
+    /* ── heatmap ────────────────────────────────────────────── */
+    if (showHeatmap) {
+      const g = 12;
+      const bump = (d: number, r: number, w: number) => {
+        const x = (r - d) / Math.max(w, 1e-6);
+        return x <= 0 ? 0 : clamp(x, 0, 1);
+      };
+      for (let py = 0; py < H; py += g) {
+        for (let px = 0; px < W; px += g) {
+          const wp = c2w({ x: px + g / 2, y: py + g / 2 });
+          let risk = 0;
+          if (human && typeof human.x === "number")
+            risk += 1.2 * bump(dist(wp, { x: +human.x, y: +human.y }), 2.5, 1.2);
+          for (const ob of obstacles) {
+            const d = dist(wp, { x: +ob.x, y: +ob.y }) - +(ob.r ?? ob.radius ?? 0.4);
+            risk += 0.6 * bump(d, 1.1, 0.9);
+          }
+          const dEdge = Math.min(
+            Math.abs(wp.x - geo.min_x),
+            Math.abs(geo.max_x - wp.x),
+            Math.abs(wp.y - geo.min_y),
+            Math.abs(geo.max_y - wp.y),
+          );
+          risk += 0.35 * bump(dEdge, 0.6, 0.6);
+          risk = clamp(risk, 0, 1);
+          if (risk < 0.05) continue;
+          ctx.fillStyle = `rgba(239,68,68,${0.04 + 0.3 * risk})`;
+          ctx.fillRect(px, py, g, g);
+        }
+      }
     }
 
-    if (human) {
-      const p = worldToCanvas({ x: Number(human.x), y: Number(human.y) });
-      ctx.strokeStyle = "#f59e0b";
-      ctx.lineWidth = 2;
+    /* ── trail ──────────────────────────────────────────────── */
+    if (showTrail) {
+      const tr = trailRef.current;
+      if (tr.length >= 2) {
+        for (let i = 1; i < tr.length; i++) {
+          const a = 0.08 + (i / tr.length) * 0.4;
+          const p0 = w2c(tr[i - 1]);
+          const p1 = w2c(tr[i]);
+          ctx.strokeStyle = `rgba(6,182,212,${a})`;
+          ctx.lineWidth = 1.5 + (i / tr.length) * 1.5;
+          ctx.beginPath();
+          ctx.moveTo(p0.x, p0.y);
+          ctx.lineTo(p1.x, p1.y);
+          ctx.stroke();
+        }
+        for (let i = 0; i < tr.length; i += 8) {
+          const p = w2c(tr[i]);
+          ctx.fillStyle = `rgba(6,182,212,${0.15 + (i / tr.length) * 0.5})`;
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, 2, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+    }
+
+    /* ── obstacles (crate boxes) ────────────────────────────── */
+    for (const ob of obstacles) {
+      const p = w2c({ x: +ob.x, y: +ob.y });
+      const r = Math.max(5, +(ob.r ?? ob.radius ?? 0.5) * baseScale * zoom);
+
+      /* glow */
+      const grad = ctx.createRadialGradient(p.x, p.y, r * 0.3, p.x, p.y, r * 2.5);
+      grad.addColorStop(0, "rgba(220,38,38,0.15)");
+      grad.addColorStop(1, "rgba(220,38,38,0)");
+      ctx.fillStyle = grad;
       ctx.beginPath();
-      ctx.arc(p.x, p.y, 1.5 * baseScale * zoom, 0, Math.PI * 2);
+      ctx.arc(p.x, p.y, r * 2.5, 0, Math.PI * 2);
+      ctx.fill();
+
+      /* box */
+      const bs = r * 1.4;
+      ctx.fillStyle = C.obstacle;
+      ctx.strokeStyle = C.obsBorder;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.roundRect(p.x - bs, p.y - bs, bs * 2, bs * 2, 3);
+      ctx.fill();
       ctx.stroke();
 
-      ctx.fillStyle = "#f59e0b";
+      /* cross */
+      ctx.strokeStyle = "rgba(255,255,255,0.3)";
+      ctx.lineWidth = 1;
       ctx.beginPath();
-      ctx.arc(p.x, p.y, 5, 0, Math.PI * 2);
-      ctx.fill();
+      ctx.moveTo(p.x - bs + 2, p.y - bs + 2);
+      ctx.lineTo(p.x + bs - 2, p.y + bs - 2);
+      ctx.moveTo(p.x + bs - 2, p.y - bs + 2);
+      ctx.lineTo(p.x - bs + 2, p.y + bs - 2);
+      ctx.stroke();
+
+      ctx.fillStyle = "rgba(255,255,255,0.7)";
+      ctx.font = `bold ${Math.max(7, 8 * zoom)}px system-ui`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "bottom";
+      ctx.fillText("OBSTACLE", p.x, p.y - bs - 3);
     }
 
-    if (pathPoints && pathPoints.length >= 2) {
-      ctx.strokeStyle = "#3b82f6";
+    /* ── human ──────────────────────────────────────────────── */
+    if (human && typeof human.x === "number") {
+      const p = w2c({ x: +human.x, y: +human.y });
+
+      /* danger 1m */
+      const dr = 1.0 * baseScale * zoom;
+      ctx.fillStyle = C.humanDanger;
+      ctx.strokeStyle = `rgba(239,68,68,${0.3 + pulse * 0.3})`;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, dr, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+
+      /* caution 3m */
+      const cr = 3.0 * baseScale * zoom;
+      ctx.fillStyle = C.humanCaution;
+      ctx.strokeStyle = "rgba(245,158,11,0.2)";
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, cr, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      /* ring labels */
+      ctx.fillStyle = "rgba(239,68,68,0.6)";
+      ctx.font = `${Math.max(7, 8 * zoom)}px system-ui`;
+      ctx.textAlign = "center";
+      ctx.fillText("STOP 1m", p.x, p.y - dr - 2);
+      ctx.fillStyle = "rgba(245,158,11,0.5)";
+      ctx.fillText("SLOW 3m", p.x, p.y - cr - 2);
+
+      /* body */
+      ctx.fillStyle = C.human;
+      ctx.strokeStyle = "#92400e";
       ctx.lineWidth = 2;
       ctx.beginPath();
-      const first = worldToCanvas(pathPoints[0]);
-      ctx.moveTo(first.x, first.y);
+      ctx.arc(p.x, p.y, 7 * zoom, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      /* head */
+      ctx.beginPath();
+      ctx.arc(p.x, p.y - 3 * zoom, 2.5 * zoom, 0, Math.PI * 2);
+      ctx.strokeStyle = "#92400e";
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      /* body line */
+      ctx.beginPath();
+      ctx.moveTo(p.x, p.y - 0.5 * zoom);
+      ctx.lineTo(p.x, p.y + 3 * zoom);
+      ctx.stroke();
+
+      ctx.fillStyle = C.human;
+      ctx.font = `bold ${Math.max(8, 9 * zoom)}px system-ui`;
+      ctx.textAlign = "center";
+      ctx.fillText("HUMAN", p.x, p.y + 12 * zoom);
+
+      /* distance from robot */
+      if (telemetry) {
+        const d = dist(
+          { x: +(telemetry.x ?? 0), y: +(telemetry.y ?? 0) },
+          { x: +human.x, y: +human.y },
+        );
+        ctx.fillStyle = d < 1 ? "#ef4444" : d < 3 ? "#f59e0b" : "#22c55e";
+        ctx.font = `bold ${Math.max(9, 10 * zoom)}px monospace`;
+        ctx.fillText(`${d.toFixed(1)}m`, p.x, p.y + 22 * zoom);
+      }
+    }
+
+    /* ── path preview ───────────────────────────────────────── */
+    if (pathPoints && pathPoints.length >= 2) {
+      ctx.strokeStyle = "rgba(59,130,246,0.15)";
+      ctx.lineWidth = 6;
+      ctx.beginPath();
+      const f = w2c(pathPoints[0]);
+      ctx.moveTo(f.x, f.y);
       for (let i = 1; i < pathPoints.length; i++) {
-        const pt = worldToCanvas(pathPoints[i]);
+        const pt = w2c(pathPoints[i]);
         ctx.lineTo(pt.x, pt.y);
       }
       ctx.stroke();
+
+      ctx.strokeStyle = C.path;
+      ctx.lineWidth = 2;
+      ctx.setLineDash([6, 3]);
+      ctx.beginPath();
+      ctx.moveTo(f.x, f.y);
+      for (let i = 1; i < pathPoints.length; i++) {
+        const pt = w2c(pathPoints[i]);
+        ctx.lineTo(pt.x, pt.y);
+      }
+      ctx.stroke();
+      ctx.setLineDash([]);
     }
 
-    // Plan waypoints (numbered, from LLM)
+    /* ── LLM plan waypoints ─────────────────────────────────── */
     if (planWaypoints && planWaypoints.length > 0) {
-      // Draw connecting line
-      ctx.strokeStyle = "#a855f7";
+      ctx.strokeStyle = C.plan;
       ctx.lineWidth = 2;
       ctx.setLineDash([6, 4]);
       ctx.beginPath();
-      const startPt = telemetry
-        ? worldToCanvas({ x: Number(telemetry.x ?? 0), y: Number(telemetry.y ?? 0) })
-        : worldToCanvas(planWaypoints[0]);
-      ctx.moveTo(startPt.x, startPt.y);
+      const sp = telemetry
+        ? w2c({ x: +(telemetry.x ?? 0), y: +(telemetry.y ?? 0) })
+        : w2c(planWaypoints[0]);
+      ctx.moveTo(sp.x, sp.y);
       for (const wp of planWaypoints) {
-        const p = worldToCanvas(wp);
+        const p = w2c(wp);
         ctx.lineTo(p.x, p.y);
       }
       ctx.stroke();
       ctx.setLineDash([]);
 
-      // Draw waypoint markers
       for (let i = 0; i < planWaypoints.length; i++) {
         const wp = planWaypoints[i];
-        const p = worldToCanvas(wp);
-        // Circle
-        ctx.fillStyle = "#a855f7";
+        const p = w2c(wp);
+        ctx.strokeStyle = C.plan;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 12, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.fillStyle = C.plan;
         ctx.beginPath();
         ctx.arc(p.x, p.y, 8, 0, Math.PI * 2);
         ctx.fill();
-        // Number
-        ctx.fillStyle = "#ffffff";
-        ctx.font = "bold 10px ui-sans-serif, system-ui";
+        ctx.fillStyle = "#fff";
+        ctx.font = `bold ${Math.max(9, 10 * zoom)}px system-ui`;
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
         ctx.fillText(String(i + 1), p.x, p.y);
+        if (wp.max_speed != null) {
+          ctx.fillStyle = C.textDim;
+          ctx.font = `${Math.max(7, 8 * zoom)}px monospace`;
+          ctx.textBaseline = "top";
+          ctx.fillText(`${wp.max_speed.toFixed(1)}m/s`, p.x, p.y + 14);
+        }
       }
       ctx.textAlign = "start";
       ctx.textBaseline = "alphabetic";
     }
 
+    /* ── robot ──────────────────────────────────────────────── */
     if (telemetry) {
-      const rx = Number(telemetry.x ?? 0);
-      const ry = Number(telemetry.y ?? 0);
-      const rt = Number(telemetry.theta ?? 0);
-      const p = worldToCanvas({ x: rx, y: ry });
-
+      const rx = +(telemetry.x ?? 0);
+      const ry = +(telemetry.y ?? 0);
+      const rt = +(telemetry.theta ?? 0);
+      const spd = +(telemetry.speed ?? 0);
+      const p = w2c({ x: rx, y: ry });
       const st = String(safetyState).toUpperCase();
-      const safetyRadius = 18;
+
+      /* safety ring */
+      const sr = 22;
       if (st === "STOP") {
-        ctx.strokeStyle = "rgba(239, 68, 68, 0.9)";
-        ctx.fillStyle = "rgba(239, 68, 68, 0.15)";
+        ctx.strokeStyle = `rgba(239,68,68,${0.6 + pulse * 0.4})`;
+        ctx.fillStyle = `rgba(239,68,68,${0.05 + pulse * 0.08})`;
         ctx.lineWidth = 3;
         ctx.beginPath();
-        ctx.arc(p.x, p.y, safetyRadius, 0, Math.PI * 2);
+        ctx.arc(p.x, p.y, sr, 0, Math.PI * 2);
         ctx.fill();
         ctx.stroke();
       } else if (st === "SLOW") {
-        ctx.strokeStyle = "rgba(245, 158, 11, 0.9)";
-        ctx.fillStyle = "rgba(245, 158, 11, 0.12)";
-        ctx.lineWidth = 3;
+        ctx.strokeStyle = `rgba(245,158,11,${0.5 + pulse * 0.3})`;
+        ctx.fillStyle = "rgba(245,158,11,0.06)";
+        ctx.lineWidth = 2.5;
         ctx.beginPath();
-        ctx.arc(p.x, p.y, safetyRadius, 0, Math.PI * 2);
+        ctx.arc(p.x, p.y, sr, 0, Math.PI * 2);
         ctx.fill();
         ctx.stroke();
       } else if (st === "REPLAN") {
-        ctx.strokeStyle = "rgba(99, 102, 241, 0.9)";
-        ctx.fillStyle = "rgba(99, 102, 241, 0.12)";
-        ctx.lineWidth = 3;
+        ctx.strokeStyle = `rgba(99,102,241,${0.5 + pulse * 0.3})`;
+        ctx.fillStyle = "rgba(99,102,241,0.06)";
+        ctx.lineWidth = 2.5;
+        ctx.setLineDash([5, 3]);
         ctx.beginPath();
-        ctx.arc(p.x, p.y, safetyRadius, 0, Math.PI * 2);
+        ctx.arc(p.x, p.y, sr, 0, Math.PI * 2);
         ctx.fill();
         ctx.stroke();
+        ctx.setLineDash([]);
       }
 
-      // Robot body — larger, filled circle with border
-      ctx.fillStyle = "#0ea5e9";
-      ctx.strokeStyle = "#0c4a6e";
+      /* glow */
+      const rg = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, 20);
+      rg.addColorStop(0, C.robotGlow);
+      rg.addColorStop(1, "rgba(6,182,212,0)");
+      ctx.fillStyle = rg;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 20, 0, Math.PI * 2);
+      ctx.fill();
+
+      /* body */
+      const rb = 10;
+      ctx.fillStyle = C.robot;
+      ctx.strokeStyle = C.robotDark;
       ctx.lineWidth = 2;
       ctx.beginPath();
-      ctx.arc(p.x, p.y, 10, 0, Math.PI * 2);
+      ctx.roundRect(p.x - rb, p.y - rb, rb * 2, rb * 2, 4);
       ctx.fill();
       ctx.stroke();
+      ctx.fillStyle = C.robotDark;
+      ctx.beginPath();
+      ctx.roundRect(p.x - 4, p.y - 4, 8, 8, 2);
+      ctx.fill();
+      ctx.fillStyle = "#67e8f9";
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 2.5, 0, Math.PI * 2);
+      ctx.fill();
 
-      // Direction arrow
-      ctx.strokeStyle = "#0c4a6e";
+      /* heading arrow */
+      const al = 20;
+      const ax = p.x + Math.cos(rt) * al;
+      const ay = p.y - Math.sin(rt) * al;
+      ctx.strokeStyle = "#22d3ee";
       ctx.lineWidth = 2.5;
       ctx.beginPath();
       ctx.moveTo(p.x, p.y);
-      const arrowLen = 18;
-      const ax = p.x + Math.cos(rt) * arrowLen;
-      const ay = p.y - Math.sin(rt) * arrowLen;
       ctx.lineTo(ax, ay);
       ctx.stroke();
-      // Arrowhead
-      const headLen = 6;
-      const angle = Math.atan2(-(ay - p.y), ax - p.x);
+      const hl = 7;
+      const ang = Math.atan2(-(ay - p.y), ax - p.x);
+      ctx.fillStyle = "#22d3ee";
       ctx.beginPath();
       ctx.moveTo(ax, ay);
-      ctx.lineTo(ax - headLen * Math.cos(angle - 0.4), ay + headLen * Math.sin(angle - 0.4));
-      ctx.moveTo(ax, ay);
-      ctx.lineTo(ax - headLen * Math.cos(angle + 0.4), ay + headLen * Math.sin(angle + 0.4));
-      ctx.stroke();
+      ctx.lineTo(ax - hl * Math.cos(ang - 0.45), ay + hl * Math.sin(ang - 0.45));
+      ctx.lineTo(ax - hl * Math.cos(ang + 0.45), ay + hl * Math.sin(ang + 0.45));
+      ctx.closePath();
+      ctx.fill();
 
-      // Robot label
-      ctx.fillStyle = "#0c4a6e";
-      ctx.font = "bold 9px ui-sans-serif, system-ui";
+      /* labels */
+      ctx.fillStyle = "#22d3ee";
+      ctx.font = `bold ${Math.max(9, 10 * zoom)}px system-ui`;
       ctx.textAlign = "center";
-      ctx.fillText("ROBOT", p.x, p.y - 14);
-      ctx.textAlign = "start";
+      ctx.textBaseline = "bottom";
+      ctx.fillText("ROBOT", p.x, p.y - rb - 4);
+      ctx.fillStyle = C.textDim;
+      ctx.font = `${Math.max(8, 9 * zoom)}px monospace`;
+      ctx.textBaseline = "top";
+      ctx.fillText(`${spd.toFixed(2)} m/s`, p.x, p.y + rb + 4);
 
-      const tgt = telemetry.target;
-      if (tgt && typeof tgt.x === "number" && typeof tgt.y === "number") {
-        const tp = worldToCanvas({ x: Number(tgt.x), y: Number(tgt.y) });
-        ctx.fillStyle = "#10b981";
+      /* safety badge */
+      if (st !== "OK" && st !== "SAFE") {
+        const bc: Record<string, { bg: string; fg: string }> = {
+          STOP: { bg: "#dc2626", fg: "#fff" },
+          SLOW: { bg: "#d97706", fg: "#fff" },
+          REPLAN: { bg: "#4f46e5", fg: "#fff" },
+        };
+        const c = bc[st] ?? { bg: "#475569", fg: "#fff" };
+        const bw = st.length * 7 + 12;
+        ctx.fillStyle = c.bg;
         ctx.beginPath();
-        ctx.arc(tp.x, tp.y, 6, 0, Math.PI * 2);
+        ctx.roundRect(p.x - bw / 2, p.y - rb - 22, bw, 14, 3);
         ctx.fill();
-        ctx.fillStyle = "#065f46";
-        ctx.font = "bold 8px ui-sans-serif, system-ui";
+        ctx.fillStyle = c.fg;
+        ctx.font = `bold ${Math.max(8, 9 * zoom)}px system-ui`;
         ctx.textAlign = "center";
-        ctx.fillText("TGT", tp.x, tp.y - 9);
+        ctx.textBaseline = "middle";
+        ctx.fillText(st, p.x, p.y - rb - 15);
+      }
+      ctx.textAlign = "start";
+      ctx.textBaseline = "alphabetic";
+
+      /* target cross-hair */
+      const tgt = telemetry.target;
+      if (tgt && typeof tgt.x === "number") {
+        const tp = w2c({ x: +tgt.x, y: +tgt.y });
+        const cr = 10;
+        ctx.strokeStyle = C.target;
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(tp.x, tp.y, cr, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(tp.x - cr - 4, tp.y);
+        ctx.lineTo(tp.x + cr + 4, tp.y);
+        ctx.moveTo(tp.x, tp.y - cr - 4);
+        ctx.lineTo(tp.x, tp.y + cr + 4);
+        ctx.stroke();
+        ctx.fillStyle = C.target;
+        ctx.beginPath();
+        ctx.arc(tp.x, tp.y, 3, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = C.target;
+        ctx.font = `bold ${Math.max(8, 9 * zoom)}px system-ui`;
+        ctx.textAlign = "center";
+        ctx.fillText("TARGET", tp.x, tp.y - cr - 5);
         ctx.textAlign = "start";
       }
     }
 
-    ctx.fillStyle = "#374151";
-    ctx.font = "12px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto";
-    ctx.fillText("Wheel: zoom • Drag: pan", 10, height - 10);
-  }, [world, telemetry, pathPoints, planWaypoints, baseScale, zoom, pan, showHeatmap, showTrail, safetyState]);
+    /* ── HUD (top-left) ─────────────────────────────────────── */
+    ctx.fillStyle = "rgba(15,23,42,0.75)";
+    ctx.beginPath();
+    ctx.roundRect(6, 6, 96, 40, 4);
+    ctx.fill();
+    ctx.fillStyle = C.textDim;
+    ctx.font = "9px monospace";
+    ctx.textAlign = "left";
+    ctx.textBaseline = "top";
+    ctx.fillText("WAREHOUSE SIM", 12, 12);
+    ctx.fillText(`${(geo.max_x - geo.min_x).toFixed(0)}×${(geo.max_y - geo.min_y).toFixed(0)}m`, 12, 24);
+    ctx.fillText(`Zoom: ${zoom.toFixed(1)}×`, 12, 36);
+
+    /* ── Legend (bottom-right) ──────────────────────────────── */
+    const legend = [
+      { color: C.robot, label: "Robot" },
+      { color: C.human, label: "Human" },
+      { color: C.obstacle, label: "Obstacle" },
+      { color: C.path, label: "Path" },
+      { color: C.plan, label: "LLM Plan" },
+      { color: C.target, label: "Target" },
+    ];
+    const lx = W - 80,
+      ly = H - 10 - legend.length * 14;
+    ctx.fillStyle = "rgba(15,23,42,0.75)";
+    ctx.beginPath();
+    ctx.roundRect(lx - 6, ly - 6, 84, legend.length * 14 + 10, 4);
+    ctx.fill();
+    legend.forEach((it, i) => {
+      const y = ly + i * 14;
+      ctx.fillStyle = it.color;
+      ctx.beginPath();
+      ctx.roundRect(lx, y, 8, 8, 2);
+      ctx.fill();
+      ctx.fillStyle = C.text;
+      ctx.font = "9px system-ui";
+      ctx.textAlign = "left";
+      ctx.textBaseline = "top";
+      ctx.fillText(it.label, lx + 12, y);
+    });
+  }, [world, telemetry, pathPoints, planWaypoints, baseScale, zoom, pan, showHeatmap, showTrail, safetyState, tick, pad, zones, obstacles, human, geo]);
 
   return (
-    <div>
-      <canvas
-        ref={ref}
-        width={width}
-        height={height}
-        style={{ width: "100%", border: "1px solid #eee", borderRadius: 12, touchAction: "none" }}
-      />
-      <div style={{ fontSize: 12, color: "#666", marginTop: 8 }}>
-        Blue: path preview • Red: obstacles • Orange: human clearance • Green: target • Purple: LLM plan • Black: robot pose • Trail: breadcrumbs
-      </div>
-    </div>
+    <canvas
+      ref={ref}
+      width={W}
+      height={H}
+      style={{ width: "100%", borderRadius: 12, touchAction: "none", background: C.floor }}
+      className="border border-slate-700"
+    />
   );
 }

@@ -47,7 +47,6 @@ export default function HomePage() {
   const [goalY, setGoalY] = useState(7);
   const [creating, setCreating] = useState(false);
   const [missionRunIds, setMissionRunIds] = useState<Record<string, string>>({});
-  const [missionRunIds, setMissionRunIds] = useState<Record<string, string>>({});
 
   // Check API health
   useEffect(() => {

@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { getRun, listEvents, stopRun, getWorld, getPathPreview, triggerScenario, generateLLMPlan, executeLLMPlan } from "@/lib/api";
+import { getRun, listEvents, stopRun, getWorld, getPathPreview, triggerScenario, generateLLMPlan, executeLLMPlan, analyzeScene, analyzeTelemetry, detectFailures } from "@/lib/api";
 import { Map2D } from "@/components/Map2D";
 import { wsUrlForRun } from "@/lib/ws";
 import type { WsMessage } from "@/lib/types";
@@ -71,6 +71,21 @@ export default function RunPage({ params }: { params: { runId: string } }) {
   const [llmError, setLlmError] = useState<string | null>(null);
   const [llmExecResult, setLlmExecResult] = useState<any>(null);
   const [llmExecuting, setLlmExecuting] = useState(false);
+
+  // AI Vision / Multimodal
+  const [sceneResult, setSceneResult] = useState<any>(null);
+  const [sceneLoading, setSceneLoading] = useState(false);
+  const [sceneError, setSceneError] = useState<string | null>(null);
+
+  // Telemetry Analysis
+  const [telAnalysis, setTelAnalysis] = useState<any>(null);
+  const [telAnalysisLoading, setTelAnalysisLoading] = useState(false);
+  const [telAnalysisError, setTelAnalysisError] = useState<string | null>(null);
+
+  // Failure Detection
+  const [failureResult, setFailureResult] = useState<any>(null);
+  const [failureLoading, setFailureLoading] = useState(false);
+  const [failureError, setFailureError] = useState<string | null>(null);
 
   async function refreshEvents() {
     try {
@@ -207,6 +222,77 @@ export default function RunPage({ params }: { params: { runId: string } }) {
     }
   }
 
+  /* ── Build a scene description from live world state ────── */
+  function buildSceneDescription(): string {
+    const lines: string[] = [];
+    lines.push("Warehouse environment, 30m x 20m.");
+    if (telemetry) {
+      lines.push(`Robot at (${(+(telemetry.x ?? 0)).toFixed(1)}, ${(+(telemetry.y ?? 0)).toFixed(1)}) moving at ${(+(telemetry.speed ?? 0)).toFixed(2)} m/s.`);
+    }
+    if (world?.human) {
+      lines.push(`Human detected at (${world.human.x}, ${world.human.y}).`);
+      if (telemetry) {
+        const dx = +(telemetry.x ?? 0) - +world.human.x;
+        const dy = +(telemetry.y ?? 0) - +world.human.y;
+        const d = Math.sqrt(dx * dx + dy * dy);
+        lines.push(`Distance robot-to-human: ${d.toFixed(1)}m.`);
+      }
+    }
+    if (world?.obstacles?.length) {
+      lines.push(`${world.obstacles.length} obstacles: ` + world.obstacles.map((o: any) => `(${o.x}, ${o.y})`).join(", ") + ".");
+    }
+    if (world?.zones?.length) {
+      lines.push("Zones: " + world.zones.map((z: any) => z.name).join(", ") + ".");
+    }
+    lines.push(`Safety state: ${safety.state}.`);
+    return lines.join(" ");
+  }
+
+  async function onAnalyzeScene() {
+    setSceneLoading(true);
+    setSceneError(null);
+    setSceneResult(null);
+    try {
+      const desc = buildSceneDescription();
+      const result = await analyzeScene(desc, true);
+      setSceneResult(result);
+    } catch (e: any) {
+      setSceneError(e.message || "Scene analysis failed");
+    } finally {
+      setSceneLoading(false);
+    }
+  }
+
+  async function onAnalyzeTelemetry() {
+    setTelAnalysisLoading(true);
+    setTelAnalysisError(null);
+    setTelAnalysis(null);
+    try {
+      const recentEvents = events.slice(-10);
+      const result = await analyzeTelemetry(recentEvents, "Analyze safety trends, anomalies, and recommend actions.");
+      setTelAnalysis(result);
+    } catch (e: any) {
+      setTelAnalysisError(e.message || "Telemetry analysis failed");
+    } finally {
+      setTelAnalysisLoading(false);
+    }
+  }
+
+  async function onDetectFailures() {
+    setFailureLoading(true);
+    setFailureError(null);
+    setFailureResult(null);
+    try {
+      const recentEvents = events.slice(-15);
+      const result = await detectFailures(recentEvents);
+      setFailureResult(result);
+    } catch (e: any) {
+      setFailureError(e.message || "Failure detection failed");
+    } finally {
+      setFailureLoading(false);
+    }
+  }
+
   const lastDecision = useMemo(() => {
     const dec = [...events].reverse().find((e) => e.type === "DECISION");
     return dec?.payload || null;
@@ -282,7 +368,7 @@ export default function RunPage({ params }: { params: { runId: string } }) {
           </div>
           <Map2D world={world} telemetry={telemetry} pathPoints={pathPoints} planWaypoints={llmPlan?.waypoints || null} showHeatmap={showHeatmap} showTrail={showTrail} safetyState={safety.state} />
           <p className="text-[10px] text-slate-500 mt-2">
-            Blue: path preview &bull; Red: obstacles &bull; Orange: human clearance &bull; Green: target &bull; Purple: LLM plan &bull; Black: robot pose &bull; Trail: breadcrumbs
+            Scroll to zoom &bull; Drag to pan &bull; Cyan: robot &bull; Red: obstacles &bull; Orange: human &bull; Purple: LLM plan &bull; Green: target
           </p>
         </Card>
 
@@ -523,6 +609,208 @@ export default function RunPage({ params }: { params: { runId: string } }) {
                   <span className="text-yellow-400 text-xs font-semibold">Required Action</span>
                   <div className="text-sm text-yellow-300 mt-1">{lastDecision.governance.required_action}</div>
                 </div>
+              )}
+            </div>
+          )}
+        </Card>
+      </div>
+
+      {/* AI Vision & Multimodal Analysis (Gemini Robotics ER) */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
+        {/* Scene Analysis (Multimodal) */}
+        <Card title="🔍 AI Scene Analysis" className="lg:col-span-1">
+          <p className="text-xs text-slate-500 mb-3">
+            Gemini Robotics ER multimodal analysis of the current environment state.
+          </p>
+          <button
+            onClick={onAnalyzeScene}
+            disabled={sceneLoading}
+            className="w-full bg-indigo-500 hover:bg-indigo-600 disabled:bg-slate-600 text-white text-sm font-semibold px-4 py-2.5 rounded-lg transition mb-3"
+          >
+            {sceneLoading ? "Analyzing Scene..." : "Analyze Current Scene"}
+          </button>
+          {sceneError && (
+            <div className="text-sm text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg p-2 mb-2">
+              {sceneError}
+            </div>
+          )}
+          {sceneResult && (
+            <div className="space-y-2">
+              {/* Hazards */}
+              {sceneResult.hazards && sceneResult.hazards.length > 0 && (
+                <div>
+                  <div className="text-xs font-semibold text-red-400 mb-1">Detected Hazards</div>
+                  {sceneResult.hazards.map((h: any, i: number) => (
+                    <div key={i} className="flex items-center gap-2 text-xs p-2 rounded-lg bg-red-500/10 border border-red-500/20 mb-1">
+                      <span className={`font-bold ${
+                        (h.severity || "").toLowerCase() === "high" ? "text-red-400" :
+                        (h.severity || "").toLowerCase() === "medium" ? "text-yellow-400" : "text-green-400"
+                      }`}>{(h.severity || "?").toUpperCase()}</span>
+                      <span className="text-slate-300">{h.type || h.description || JSON.stringify(h)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {/* Risk Score */}
+              {sceneResult.risk_score != null && (
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-slate-500">Risk:</span>
+                  <div className="flex-1 h-2 bg-slate-700 rounded-full overflow-hidden">
+                    <div
+                      className={`h-full rounded-full ${
+                        sceneResult.risk_score > 0.7 ? "bg-red-500" :
+                        sceneResult.risk_score > 0.3 ? "bg-yellow-500" : "bg-green-500"
+                      }`}
+                      style={{ width: `${(sceneResult.risk_score * 100).toFixed(0)}%` }}
+                    />
+                  </div>
+                  <span className="text-xs font-mono text-slate-400">{(sceneResult.risk_score * 100).toFixed(0)}%</span>
+                </div>
+              )}
+              {/* Recommended Action */}
+              {sceneResult.recommended_action && (
+                <div className="bg-indigo-500/10 border border-indigo-500/20 rounded-lg p-2">
+                  <div className="text-xs font-semibold text-indigo-400 mb-1">Recommended Action</div>
+                  <div className="text-xs text-slate-300">{sceneResult.recommended_action}</div>
+                </div>
+              )}
+              {/* AI Analysis */}
+              {sceneResult.analysis && (
+                <div className="bg-slate-900/60 rounded-lg p-2 max-h-32 overflow-y-auto">
+                  <div className="text-xs font-semibold text-slate-400 mb-1">AI Reasoning</div>
+                  <div className="text-xs text-slate-300 whitespace-pre-wrap">{sceneResult.analysis}</div>
+                </div>
+              )}
+              {/* Model used */}
+              {sceneResult.model && (
+                <div className="text-[10px] text-slate-600 font-mono">Model: {sceneResult.model}</div>
+              )}
+            </div>
+          )}
+        </Card>
+
+        {/* Telemetry Analysis */}
+        <Card title="📊 Telemetry Analysis" className="lg:col-span-1">
+          <p className="text-xs text-slate-500 mb-3">
+            AI analysis of recent telemetry trends, anomalies, and safety patterns.
+          </p>
+          <button
+            onClick={onAnalyzeTelemetry}
+            disabled={telAnalysisLoading || events.length === 0}
+            className="w-full bg-teal-500 hover:bg-teal-600 disabled:bg-slate-600 text-white text-sm font-semibold px-4 py-2.5 rounded-lg transition mb-3"
+          >
+            {telAnalysisLoading ? "Analyzing..." : "Analyze Telemetry"}
+          </button>
+          {telAnalysisError && (
+            <div className="text-sm text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg p-2 mb-2">
+              {telAnalysisError}
+            </div>
+          )}
+          {telAnalysis && (
+            <div className="space-y-2">
+              {telAnalysis.summary && (
+                <div className="bg-slate-900/60 rounded-lg p-2 max-h-36 overflow-y-auto">
+                  <div className="text-xs font-semibold text-teal-400 mb-1">Summary</div>
+                  <div className="text-xs text-slate-300 whitespace-pre-wrap">{telAnalysis.summary}</div>
+                </div>
+              )}
+              {telAnalysis.anomalies && telAnalysis.anomalies.length > 0 && (
+                <div>
+                  <div className="text-xs font-semibold text-yellow-400 mb-1">Anomalies Detected</div>
+                  {telAnalysis.anomalies.map((a: any, i: number) => (
+                    <div key={i} className="text-xs p-2 rounded-lg bg-yellow-500/10 border border-yellow-500/20 mb-1 text-slate-300">
+                      {a.description || a.type || JSON.stringify(a)}
+                    </div>
+                  ))}
+                </div>
+              )}
+              {telAnalysis.recommendations && (
+                <div className="bg-teal-500/10 border border-teal-500/20 rounded-lg p-2">
+                  <div className="text-xs font-semibold text-teal-400 mb-1">Recommendations</div>
+                  <div className="text-xs text-slate-300 whitespace-pre-wrap">
+                    {Array.isArray(telAnalysis.recommendations)
+                      ? telAnalysis.recommendations.join("\n")
+                      : telAnalysis.recommendations}
+                  </div>
+                </div>
+              )}
+              {telAnalysis.analysis && (
+                <div className="bg-slate-900/60 rounded-lg p-2 max-h-32 overflow-y-auto">
+                  <div className="text-xs text-slate-300 whitespace-pre-wrap">{telAnalysis.analysis}</div>
+                </div>
+              )}
+              {telAnalysis.model && (
+                <div className="text-[10px] text-slate-600 font-mono">Model: {telAnalysis.model}</div>
+              )}
+            </div>
+          )}
+        </Card>
+
+        {/* Failure Detection */}
+        <Card title="⚠️ Failure Detection" className="lg:col-span-1">
+          <p className="text-xs text-slate-500 mb-3">
+            AI-powered pre-emptive failure detection and root-cause analysis.
+          </p>
+          <button
+            onClick={onDetectFailures}
+            disabled={failureLoading || events.length === 0}
+            className="w-full bg-orange-500 hover:bg-orange-600 disabled:bg-slate-600 text-white text-sm font-semibold px-4 py-2.5 rounded-lg transition mb-3"
+          >
+            {failureLoading ? "Detecting..." : "Run Failure Analysis"}
+          </button>
+          {failureError && (
+            <div className="text-sm text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg p-2 mb-2">
+              {failureError}
+            </div>
+          )}
+          {failureResult && (
+            <div className="space-y-2">
+              {/* Failure status */}
+              <div className="flex items-center gap-2">
+                <span className={`text-xs font-semibold px-2 py-0.5 rounded-full border ${
+                  failureResult.failures_detected
+                    ? "bg-red-500/20 text-red-400 border-red-500/30"
+                    : "bg-green-500/20 text-green-400 border-green-500/30"
+                }`}>
+                  {failureResult.failures_detected ? "Failures Detected" : "No Failures"}
+                </span>
+              </div>
+              {/* Failures list */}
+              {failureResult.failures && failureResult.failures.length > 0 && (
+                <div>
+                  {failureResult.failures.map((f: any, i: number) => (
+                    <div key={i} className="text-xs p-2 rounded-lg bg-red-500/10 border border-red-500/20 mb-1">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="font-bold text-red-400">{f.type || "FAILURE"}</span>
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded ${
+                          f.severity === "critical" ? "bg-red-700 text-white" :
+                          f.severity === "high" ? "bg-orange-600 text-white" : "bg-yellow-600 text-white"
+                        }`}>{f.severity || "?"}</span>
+                      </div>
+                      <div className="text-slate-300">{f.description || JSON.stringify(f)}</div>
+                      {f.root_cause && <div className="text-slate-500 mt-1">Root cause: {f.root_cause}</div>}
+                    </div>
+                  ))}
+                </div>
+              )}
+              {/* Preventive actions */}
+              {failureResult.preventive_actions && (
+                <div className="bg-orange-500/10 border border-orange-500/20 rounded-lg p-2">
+                  <div className="text-xs font-semibold text-orange-400 mb-1">Preventive Actions</div>
+                  <div className="text-xs text-slate-300 whitespace-pre-wrap">
+                    {Array.isArray(failureResult.preventive_actions)
+                      ? failureResult.preventive_actions.join("\n")
+                      : failureResult.preventive_actions}
+                  </div>
+                </div>
+              )}
+              {failureResult.analysis && (
+                <div className="bg-slate-900/60 rounded-lg p-2 max-h-32 overflow-y-auto">
+                  <div className="text-xs text-slate-300 whitespace-pre-wrap">{failureResult.analysis}</div>
+                </div>
+              )}
+              {failureResult.model && (
+                <div className="text-[10px] text-slate-600 font-mono">Model: {failureResult.model}</div>
               )}
             </div>
           )}
