@@ -130,7 +130,8 @@ class RunService:
                             await self._ws_broadcast(run_id, {"kind": "alert", "data": {"event": e}})
 
                     # Agent proposes action
-                    proposal: ActionProposal = self.agent.propose(telemetry, goal, last_governance)
+                    nl_task = mission.title if mission else "Navigate to goal"
+                    proposal: ActionProposal = await self.agent.propose(telemetry, goal, nl_task, last_governance)
                     proposal_payload = proposal.model_dump()
 
                     # Governance evaluates
