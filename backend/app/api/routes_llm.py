@@ -33,6 +33,20 @@ class ExecuteRequest(BaseModel):
     rationale: str = Field("", description="Plan rationale from Gemini")
 
 
+class AnalyzeRequest(BaseModel):
+    events: List[Dict[str, Any]] = Field(..., description="Mission event log entries")
+    question: Optional[str] = Field(None, description="Optional operator question about the telemetry")
+
+
+class SceneRequest(BaseModel):
+    scene_description: str = Field(..., description="Text description of the camera/scene")
+    include_telemetry: bool = Field(True, description="Include current sim telemetry for context")
+
+
+class FailureRequest(BaseModel):
+    events: List[Dict[str, Any]] = Field(..., description="Mission event log entries")
+
+
 class Waypoint(BaseModel):
     x: float
     y: float
@@ -72,6 +86,35 @@ class ExecuteResponse(BaseModel):
     rationale: str
     steps: List[ExecutionStep]
     audit_hash: str
+
+
+class Hazard(BaseModel):
+    type: str
+    severity: str
+    description: str
+    estimated_distance_m: Optional[float] = None
+
+
+class SceneResponse(BaseModel):
+    hazards: List[Hazard]
+    risk_score: float
+    recommended_action: str
+    reasoning: str
+    model_used: str
+
+
+class FailureItem(BaseModel):
+    type: str
+    severity: str
+    description: str
+    mitigation: str
+
+
+class FailureResponse(BaseModel):
+    failures: List[FailureItem]
+    total_events_analyzed: int
+    health_status: str
+    model_used: str
 
 
 _sim = SimAdapter()
@@ -241,4 +284,81 @@ async def execute_plan(body: ExecuteRequest):
         rationale=body.rationale,
         steps=steps,
         audit_hash=audit_hash,
+    )
+
+
+@router.post("/analyze")
+async def analyze_telemetry(body: AnalyzeRequest):
+    """Analyze mission event logs for anomalies, denials, safety near-misses, and compliance risks."""
+    if not settings.gemini_configured:
+        raise HTTPException(status_code=503, detail="Gemini is not configured. Set GEMINI_API_KEY and GEMINI_ENABLED=true.")
+    if not body.events:
+        raise HTTPException(status_code=400, detail="No events provided for analysis.")
+    planner = _get_planner()
+    try:
+        result = await planner.analyze_telemetry(body.events, body.question)
+    except Exception as e:
+        logger.exception("Telemetry analysis failed")
+        raise HTTPException(status_code=502, detail=f"Analysis failed: {e}")
+    result["audit_hash"] = sha256_canonical({"type": "ANALYSIS", "result": result})
+    return result
+
+
+@router.post("/scene", response_model=SceneResponse)
+async def analyze_scene(body: SceneRequest):
+    """Analyze a scene description for hazards, obstacles, humans, and recommend robot action."""
+    if not settings.gemini_configured:
+        raise HTTPException(status_code=503, detail="Gemini is not configured. Set GEMINI_API_KEY and GEMINI_ENABLED=true.")
+    telemetry = None
+    if body.include_telemetry:
+        try:
+            telemetry = await _sim.get_telemetry()
+        except Exception:
+            pass
+    planner = _get_planner()
+    try:
+        result = await planner.analyze_scene(body.scene_description, telemetry)
+    except Exception as e:
+        logger.exception("Scene analysis failed")
+        raise HTTPException(status_code=502, detail=f"Scene analysis failed: {e}")
+    hazards = []
+    for h in result.get("hazards", []):
+        hazards.append(Hazard(
+            type=h.get("type", "OTHER"), severity=h.get("severity", "MEDIUM"),
+            description=h.get("description", ""),
+            estimated_distance_m=h.get("estimated_distance_m"),
+        ))
+    return SceneResponse(
+        hazards=hazards, risk_score=float(result.get("risk_score", 0.5)),
+        recommended_action=result.get("recommended_action", "SLOW"),
+        reasoning=result.get("reasoning", ""), model_used=result.get("model_used", "unknown"),
+    )
+
+
+@router.post("/failure-analysis", response_model=FailureResponse)
+async def failure_analysis(body: FailureRequest):
+    """Detect failure patterns: stuck robots, oscillation, repeated policy conflicts."""
+    if not settings.gemini_configured:
+        raise HTTPException(status_code=503, detail="Gemini is not configured. Set GEMINI_API_KEY and GEMINI_ENABLED=true.")
+    if not body.events:
+        raise HTTPException(status_code=400, detail="No events provided for failure analysis.")
+    try:
+        telemetry = await _sim.get_telemetry()
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Cannot reach simulator: {e}")
+    planner = _get_planner()
+    try:
+        result = await planner.detect_failures(body.events, telemetry)
+    except Exception as e:
+        logger.exception("Failure analysis failed")
+        raise HTTPException(status_code=502, detail=f"Failure analysis failed: {e}")
+    failures = []
+    for f in result.get("failures", []):
+        failures.append(FailureItem(
+            type=f.get("type", "NONE"), severity=f.get("severity", "LOW"),
+            description=f.get("description", ""), mitigation=f.get("mitigation", ""),
+        ))
+    return FailureResponse(
+        failures=failures, total_events_analyzed=int(result.get("total_events_analyzed", len(body.events))),
+        health_status=result.get("health_status", "OK"), model_used=result.get("model_used", "unknown"),
     )
