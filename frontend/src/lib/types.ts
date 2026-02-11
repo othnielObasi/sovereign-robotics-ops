@@ -24,4 +24,5 @@ export type WsMessage =
   | { kind: "telemetry"; data: any }
   | { kind: "event"; data: any }
   | { kind: "alert"; data: any }
-  | { kind: "status"; data: any };
+  | { kind: "status"; data: any }
+  | { kind: "agent_reasoning"; data: any };

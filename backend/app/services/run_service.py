@@ -160,7 +160,13 @@ class RunService:
 
                     # Agent proposes action
                     nl_task = mission.title if mission else "Navigate to goal"
-                    proposal: ActionProposal = await self.agent.propose(telemetry, goal, nl_task, last_governance)
+                    # Pass world state for agentic mode
+                    world_state = None
+                    try:
+                        world_state = await self.sim.get_world()
+                    except Exception:
+                        pass
+                    proposal: ActionProposal = await self.agent.propose(telemetry, goal, nl_task, last_governance, world_state)
                     proposal_payload = proposal.model_dump()
 
                     # Governance evaluates
@@ -181,17 +187,33 @@ class RunService:
 
                     # If approved, execute
                     execution = None
+                    was_executed = False
                     if gov_decision.decision == "APPROVED":
                         cmd = {"intent": proposal.intent, "params": proposal.params}
                         execution = await self.sim.send_command(cmd)
                         exec_payload = {"command": cmd, "result": execution}
                         self._append_event(db, run_id, "EXECUTION", exec_payload)
+                        was_executed = True
+
+                    # Record outcome in agent memory (agentic mode)
+                    self.agent.record_outcome(proposal, gov_decision, was_executed)
 
                     # Commit events/telemetry
                     db.commit()
 
                     # Broadcast event summary to UI
                     if self._ws_broadcast:
+                        # Broadcast agent reasoning chain (agentic mode)
+                        thought_chain = self.agent.last_thought_chain
+                        if thought_chain:
+                            await self._ws_broadcast(run_id, {
+                                "kind": "agent_reasoning",
+                                "data": {
+                                    "steps": thought_chain,
+                                    "total_steps": len(thought_chain),
+                                },
+                            })
+
                         await self._ws_broadcast(run_id, {
                             "kind": "event",
                             "data": {

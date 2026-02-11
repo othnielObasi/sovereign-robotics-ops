@@ -75,7 +75,7 @@ class Settings(BaseSettings):
     # LLM / Agent Configuration
     # ------------------------------------------------------------
     llm_enabled: bool = False
-    llm_provider: str = "gemini"  # gemini | openai | mock
+    llm_provider: str = "gemini"  # gemini | agentic | openai | mock
 
     # ------------------------------------------------------------
     # Observability

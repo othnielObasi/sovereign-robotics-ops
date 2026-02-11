@@ -198,6 +198,18 @@ export async function detectFailures(events: any[], model?: string) {
   return r.json();
 }
 
+// ---- Agentic Planner ----
+
+export async function agenticPropose(instruction: string, goal?: { x: number; y: number }) {
+  const r = await fetch(`${API_BASE}/llm/agentic/propose`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ instruction, goal: goal || null }),
+  });
+  if (!r.ok) throw new Error(await parseErrorResponse(r, "Agentic proposal failed"));
+  return r.json();
+}
+
 // ---- Replay & Audit ----
 
 export async function replayMission(missionId: string) {

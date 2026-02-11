@@ -379,3 +379,81 @@ async def failure_analysis(body: FailureRequest):
         failures=failures, total_events_analyzed=int(result.get("total_events_analyzed", len(body.events))),
         health_status=result.get("health_status", "OK"), model_used=result.get("model_used", "unknown"),
     )
+
+
+# ---- Agentic Endpoints ----
+
+class AgenticProposeRequest(BaseModel):
+    instruction: str = Field(..., description="Natural-language task for the agent")
+    goal: Optional[Dict[str, float]] = Field(None, description="Optional {x, y} goal coordinate")
+
+
+class AgenticThoughtStep(BaseModel):
+    step: int
+    thought: str
+    action: Optional[str] = None
+    action_input: Optional[Dict[str, Any]] = None
+    observation: Optional[str] = None
+
+
+class AgenticResponse(BaseModel):
+    proposal: Dict[str, Any]
+    thought_chain: List[AgenticThoughtStep]
+    governance: Dict[str, Any]
+    model_used: str
+    replanning_used: bool
+    memory_summary: Optional[Dict[str, Any]] = None
+
+
+@router.post("/agentic/propose", response_model=AgenticResponse)
+async def agentic_propose(body: AgenticProposeRequest):
+    """Run the agentic ReAct planner: reason → use tools → propose → govern."""
+    if not settings.gemini_configured:
+        raise HTTPException(status_code=503, detail="Gemini API not configured.")
+    try:
+        telemetry = await _sim.get_telemetry()
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Cannot reach simulator: {e}")
+    try:
+        world = await _sim.get_world()
+    except Exception:
+        world = None
+
+    goal = body.goal or {"x": 15.0, "y": 10.0}
+
+    from app.services.agentic_planner import AgenticPlanner
+    agent = AgenticPlanner()
+
+    try:
+        proposal, thoughts, model = await agent.propose(
+            telemetry, goal, body.instruction, world=world,
+        )
+    except Exception as e:
+        logger.exception("Agentic proposal failed")
+        raise HTTPException(status_code=502, detail=f"Agentic proposal failed: {e}")
+
+    # Governance check
+    gov_decision = evaluate_policies(telemetry, proposal)
+    agent.record_outcome(proposal, gov_decision, gov_decision.decision == "APPROVED")
+
+    thought_steps = [
+        AgenticThoughtStep(
+            step=t.step_number,
+            thought=t.thought,
+            action=t.action,
+            action_input=t.action_input,
+            observation=t.observation,
+        )
+        for t in thoughts
+    ]
+
+    replanning_used = any(t.action == "replan" for t in thoughts)
+
+    return AgenticResponse(
+        proposal=proposal.model_dump(),
+        thought_chain=thought_steps,
+        governance=gov_decision.model_dump(),
+        model_used=model,
+        replanning_used=replanning_used,
+        memory_summary=agent.get_memory_summary(),
+    )

@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { getRun, listEvents, stopRun, getWorld, getPathPreview, triggerScenario, generateLLMPlan, executeLLMPlan, analyzeScene, analyzeTelemetry, detectFailures } from "@/lib/api";
+import { getRun, listEvents, stopRun, getWorld, getPathPreview, triggerScenario, generateLLMPlan, executeLLMPlan, analyzeScene, analyzeTelemetry, detectFailures, agenticPropose } from "@/lib/api";
 import { Map2D } from "@/components/Map2D";
 import { wsUrlForRun } from "@/lib/ws";
 import type { WsMessage } from "@/lib/types";
@@ -87,6 +87,14 @@ export default function RunPage({ params }: { params: { runId: string } }) {
   const [failureLoading, setFailureLoading] = useState(false);
   const [failureError, setFailureError] = useState<string | null>(null);
 
+  // Agentic Planner
+  const [agenticInstruction, setAgenticInstruction] = useState("");
+  const [agenticResult, setAgenticResult] = useState<any>(null);
+  const [agenticLoading, setAgenticLoading] = useState(false);
+  const [agenticError, setAgenticError] = useState<string | null>(null);
+  // Live agentic reasoning from WebSocket
+  const [liveThoughtChain, setLiveThoughtChain] = useState<any[]>([]);
+
   async function refreshEvents() {
     try {
       const rows = await listEvents(runId);
@@ -127,6 +135,7 @@ export default function RunPage({ params }: { params: { runId: string } }) {
           if (ps) setLivePolicyState(ps);
         }
         if (msg.kind === "status") setStatus(msg.data.status);
+        if (msg.kind === "agent_reasoning") setLiveThoughtChain(msg.data?.steps || []);
         try { ws.send("ping"); } catch {}
       };
 
@@ -290,6 +299,21 @@ export default function RunPage({ params }: { params: { runId: string } }) {
       setFailureError(e.message || "Failure detection failed");
     } finally {
       setFailureLoading(false);
+    }
+  }
+
+  async function onAgenticPropose() {
+    if (!agenticInstruction.trim()) return;
+    setAgenticLoading(true);
+    setAgenticError(null);
+    setAgenticResult(null);
+    try {
+      const result = await agenticPropose(agenticInstruction);
+      setAgenticResult(result);
+    } catch (e: any) {
+      setAgenticError(e.message || "Agentic proposal failed");
+    } finally {
+      setAgenticLoading(false);
     }
   }
 
@@ -816,6 +840,186 @@ export default function RunPage({ params }: { params: { runId: string } }) {
           )}
         </Card>
       </div>
+
+      {/* Agentic Reasoning Panel */}
+      <Card title="🤖 Agentic Planner (ReAct)" className="col-span-full">
+        <p className="text-xs text-slate-500 mb-3">
+          Multi-step reasoning agent with tool use, memory, and automatic replanning on policy denial.
+        </p>
+        <div className="flex gap-2 mb-3">
+          <input
+            type="text"
+            value={agenticInstruction}
+            onChange={(e) => setAgenticInstruction(e.target.value)}
+            placeholder="e.g. Move to loading bay while avoiding humans"
+            className="flex-1 bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-200 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-purple-500/50"
+            onKeyDown={(e) => e.key === "Enter" && onAgenticPropose()}
+          />
+          <button
+            onClick={onAgenticPropose}
+            disabled={agenticLoading || !agenticInstruction.trim()}
+            className="bg-purple-600 hover:bg-purple-700 disabled:bg-slate-600 text-white text-sm font-semibold px-5 py-2 rounded-lg transition whitespace-nowrap"
+          >
+            {agenticLoading ? "Thinking..." : "Run Agent"}
+          </button>
+        </div>
+        {agenticError && (
+          <div className="text-sm text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg p-2 mb-3">
+            {agenticError}
+          </div>
+        )}
+
+        {/* Live thought chain from WebSocket during active runs */}
+        {liveThoughtChain.length > 0 && !agenticResult && (
+          <div className="mb-3">
+            <div className="text-xs font-semibold text-purple-400 mb-2 flex items-center gap-2">
+              <span className="w-2 h-2 bg-purple-400 rounded-full animate-pulse" />
+              Live Reasoning Chain
+            </div>
+            <div className="space-y-1.5 max-h-48 overflow-y-auto">
+              {liveThoughtChain.map((step: any, i: number) => (
+                <div key={i} className="bg-purple-500/5 border border-purple-500/15 rounded-lg p-2 text-xs">
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="bg-purple-500/20 text-purple-300 px-1.5 py-0.5 rounded font-mono text-[10px]">
+                      Step {step.step_number || i + 1}
+                    </span>
+                    {step.action && (
+                      <span className="bg-slate-700 text-cyan-300 px-1.5 py-0.5 rounded font-mono text-[10px]">
+                        {step.action}
+                      </span>
+                    )}
+                  </div>
+                  {step.thought && <div className="text-slate-300 mb-1">💭 {step.thought}</div>}
+                  {step.observation && (
+                    <div className="text-slate-500 font-mono text-[10px] bg-slate-900/60 rounded p-1.5 max-h-16 overflow-y-auto">
+                      {typeof step.observation === "string" ? step.observation : JSON.stringify(step.observation, null, 1)}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {agenticResult && (
+          <div className="space-y-3">
+            {/* Replanning indicator */}
+            {agenticResult.replanning_used && (
+              <div className="flex items-center gap-2 text-xs bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2">
+                <span className="text-amber-400">🔄</span>
+                <span className="text-amber-300 font-semibold">Agent replanned after policy denial</span>
+              </div>
+            )}
+
+            {/* Thought chain */}
+            {agenticResult.thought_chain && agenticResult.thought_chain.length > 0 && (
+              <div>
+                <div className="text-xs font-semibold text-purple-400 mb-2">Reasoning Chain</div>
+                <div className="space-y-1.5 max-h-64 overflow-y-auto">
+                  {agenticResult.thought_chain.map((step: any, i: number) => (
+                    <div key={i} className="bg-purple-500/5 border border-purple-500/15 rounded-lg p-2 text-xs">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="bg-purple-500/20 text-purple-300 px-1.5 py-0.5 rounded font-mono text-[10px]">
+                          Step {step.step_number || i + 1}
+                        </span>
+                        {step.action && (
+                          <span className="bg-slate-700 text-cyan-300 px-1.5 py-0.5 rounded font-mono text-[10px]">
+                            {step.action}
+                          </span>
+                        )}
+                      </div>
+                      {step.thought && <div className="text-slate-300 mb-1">💭 {step.thought}</div>}
+                      {step.action_input && (
+                        <div className="text-slate-400 font-mono text-[10px] mb-1">
+                          Input: {typeof step.action_input === "string" ? step.action_input : JSON.stringify(step.action_input)}
+                        </div>
+                      )}
+                      {step.observation && (
+                        <div className="text-slate-500 font-mono text-[10px] bg-slate-900/60 rounded p-1.5 max-h-20 overflow-y-auto">
+                          {typeof step.observation === "string" ? step.observation : JSON.stringify(step.observation, null, 1)}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Proposal result */}
+            {agenticResult.proposal && (
+              <div className="bg-slate-900/60 border border-slate-700/50 rounded-lg p-3">
+                <div className="text-xs font-semibold text-cyan-400 mb-2">Final Proposal</div>
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  <div>
+                    <span className="text-slate-500">Intent:</span>
+                    <span className="text-slate-200 ml-1 font-semibold">{agenticResult.proposal.intent}</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500">Speed:</span>
+                    <span className="text-slate-200 ml-1">{agenticResult.proposal.params?.max_speed ?? "—"}</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500">Target:</span>
+                    <span className="text-slate-200 ml-1">
+                      ({agenticResult.proposal.params?.x ?? "—"}, {agenticResult.proposal.params?.y ?? "—"})
+                    </span>
+                  </div>
+                </div>
+                {agenticResult.proposal.rationale && (
+                  <div className="text-xs text-slate-400 mt-2 bg-slate-800/60 rounded p-2">
+                    {agenticResult.proposal.rationale}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Governance result */}
+            {agenticResult.governance && (
+              <div className={`border rounded-lg p-3 text-xs ${
+                agenticResult.governance.decision === "APPROVED"
+                  ? "bg-green-500/10 border-green-500/20"
+                  : agenticResult.governance.decision === "DENIED"
+                  ? "bg-red-500/10 border-red-500/20"
+                  : "bg-yellow-500/10 border-yellow-500/20"
+              }`}>
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="font-semibold">
+                    {agenticResult.governance.decision === "APPROVED" ? "✅" : agenticResult.governance.decision === "DENIED" ? "❌" : "⚠️"}
+                    {" "}{agenticResult.governance.decision}
+                  </span>
+                  <span className="text-slate-400 ml-auto">
+                    Risk: {(agenticResult.governance.risk_score * 100).toFixed(0)}%
+                  </span>
+                </div>
+                {agenticResult.governance.reasons && agenticResult.governance.reasons.length > 0 && (
+                  <ul className="text-slate-400 space-y-0.5 mt-1">
+                    {agenticResult.governance.reasons.map((r: string, i: number) => (
+                      <li key={i}>• {r}</li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
+
+            {/* Memory summary */}
+            {agenticResult.memory_summary && (
+              <div className="bg-slate-900/40 border border-slate-700/30 rounded-lg p-2">
+                <div className="text-[10px] font-semibold text-slate-500 mb-1">Agent Memory</div>
+                <div className="flex flex-wrap gap-3 text-[10px] text-slate-400">
+                  <span>Total: {agenticResult.memory_summary.total_entries}</span>
+                  <span>Approved: {agenticResult.memory_summary.approved}</span>
+                  <span>Denied: {agenticResult.memory_summary.denied}</span>
+                  <span>Denials in a row: {agenticResult.memory_summary.denial_count}</span>
+                </div>
+              </div>
+            )}
+
+            {agenticResult.model_used && (
+              <div className="text-[10px] text-slate-600 font-mono">Model: {agenticResult.model_used}</div>
+            )}
+          </div>
+        )}
+      </Card>
 
       {/* Bottom Row: Alerts + Events */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
