@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import httpx
 
@@ -10,7 +11,16 @@ from app.config import settings
 from app.schemas.governance import ActionProposal
 
 
+logger = logging.getLogger("app.gemini_planner")
+
 _JSON_RE = re.compile(r"(\{.*\}|\[.*\])", re.DOTALL)
+
+# Model cascade: robotics-er (primary) → pro → flash → deterministic fallback
+MODEL_CASCADE: List[str] = [
+    "gemini-robotics-er-1.5-preview",  # Primary: robotics-specialized
+    "gemini-2.5-pro-preview-05-06",    # Fallback 1: deep reasoning
+    "gemini-2.0-flash",                # Fallback 2: fast, high quota
+]
 
 
 def _extract_json(text: str) -> Any:
@@ -22,174 +32,127 @@ def _extract_json(text: str) -> Any:
 
 
 class GeminiPlanner:
-    """LLM planner using Gemini Robotics-ER 1.5 (preview) via REST.
-
-    Model docs: https://ai.google.dev/gemini-api/docs/robotics-overview
-    """
+    """LLM planner with cascading model fallback for reliability."""
 
     def __init__(self):
         self.api_key = settings.gemini_api_key
-        self.model = settings.gemini_model
+        self.primary_model = settings.gemini_model
         self.timeout_s = settings.gemini_timeout_s
+        self.model_cascade = [self.primary_model] + [
+            m for m in MODEL_CASCADE if m != self.primary_model
+        ]
 
-    async def propose(
-        self,
-        telemetry: Dict[str, Any],
-        goal: Dict[str, float],
-        nl_task: str,
-        last_governance: Optional[Dict[str, Any]] = None,
-    ) -> ActionProposal:
-        if not self.api_key:
-            raise RuntimeError("GEMINI_API_KEY is not set")
-
-        # Keep it stable and predictable: constrain output to ONE action proposal.
-        prompt = f"""You are the high-level reasoning layer for a simulated mobile robot.
-
-TASK:
-{nl_task}
-
-WORLD STATE (telemetry JSON):
-{json.dumps(telemetry, indent=2)}
-
-GOAL:
-{json.dumps(goal)}
-
-INSTRUCTIONS:
-- Propose exactly ONE next action.
-- Allowed intents: MOVE_TO, STOP, WAIT.
-- For MOVE_TO, output params: {{"x": <float>, "y": <float>, "max_speed": <float 0.1..1.0>}}
-- If human_detected=true or nearest_obstacle_m is low, reduce max_speed.
-- Output STRICT JSON (no markdown) in this schema:
-
-{{"intent":"MOVE_TO|STOP|WAIT","params":{{...}},"rationale":"..."}}
-"""
-
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent"
-        headers = {
-            "x-goog-api-key": self.api_key,
-            "Content-Type": "application/json",
-        }
+    async def _call_gemini(self, model: str, prompt: str) -> Optional[str]:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+        headers = {"x-goog-api-key": self.api_key, "Content-Type": "application/json"}
         payload = {
             "contents": [{"parts": [{"text": prompt}]}],
-            "generationConfig": {
-                "temperature": 0.2,
-                # keep latency low, reasoning deterministic
-                "thinkingConfig": {"thinkingBudget": 0},
-            },
+            "generationConfig": {"temperature": 0.2, "thinkingConfig": {"thinkingBudget": 0}},
+        }
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout_s) as client:
+                r = await client.post(url, headers=headers, json=payload)
+                if r.status_code == 429:
+                    logger.warning(f"Rate limited on {model}")
+                    return None
+                if r.status_code >= 400:
+                    logger.warning(f"Error {r.status_code} on {model}: {r.text[:200]}")
+                    return None
+                data = r.json()
+                return data["candidates"][0]["content"]["parts"][0].get("text", "")
+        except Exception as e:
+            logger.warning(f"Exception calling {model}: {e}")
+            return None
+
+    def _deterministic_proposal(self, telemetry: Dict[str, Any], goal: Dict[str, float]) -> ActionProposal:
+        x, y = float(telemetry.get("x", 0)), float(telemetry.get("y", 0))
+        gx, gy = float(goal.get("x", 0)), float(goal.get("y", 0))
+        if abs(x - gx) < 0.5 and abs(y - gy) < 0.5:
+            return ActionProposal(intent="STOP", params={}, rationale="[Fallback] Reached goal.")
+        speed = 0.4 if telemetry.get("human_detected") else 0.6
+        return ActionProposal(intent="MOVE_TO", params={"x": gx, "y": gy, "max_speed": speed},
+                              rationale="[Fallback] Deterministic path to goal.")
+
+    def _deterministic_plan(self, telemetry: Dict[str, Any], goal: Optional[Dict[str, float]]) -> Dict[str, Any]:
+        x, y = float(telemetry.get("x", 0)), float(telemetry.get("y", 0))
+        gx = float(goal.get("x", 15) if goal else 15)
+        gy = float(goal.get("y", 10) if goal else 10)
+        speed = 0.4 if telemetry.get("human_detected") else 0.6
+        return {
+            "waypoints": [{"x": (x+gx)/2, "y": (y+gy)/2, "max_speed": speed}, {"x": gx, "y": gy, "max_speed": speed}],
+            "rationale": "[Fallback] Deterministic 2-waypoint plan.",
+            "estimated_time_s": 15.0,
+            "model_used": "deterministic_fallback",
         }
 
-        async with httpx.AsyncClient(timeout=self.timeout_s) as client:
-            r = await client.post(url, headers=headers, json=payload)
-            if r.status_code >= 400:
-                raise RuntimeError(f"Gemini error {r.status_code}: {r.text[:400]}")
-            data = r.json()
-
-        # Gemini returns candidates[].content.parts[].text
-        text = ""
-        try:
-            text = data["candidates"][0]["content"]["parts"][0].get("text", "")
-        except Exception:
-            text = json.dumps(data)[:800]
-
-        obj = _extract_json(text)
-        proposal = ActionProposal(**obj)
-
-        # Safety clamp for MVP
-        if proposal.intent == "MOVE_TO":
-            p = proposal.params or {}
-            p["x"] = float(p.get("x", goal.get("x", 0)))
-            p["y"] = float(p.get("y", goal.get("y", 0)))
-            p["max_speed"] = float(p.get("max_speed", 0.5))
-            p["max_speed"] = max(0.1, min(1.0, p["max_speed"]))
-            proposal.params = p
-
-        return proposal
-
-    async def generate_plan(
-        self,
-        telemetry: Dict[str, Any],
-        instruction: str,
-        goal: Optional[Dict[str, float]] = None,
-    ) -> Dict[str, Any]:
-        """Generate a multi-waypoint plan from a natural-language instruction.
-
-        Returns a dict with:
-          - waypoints: [{x, y, max_speed}, ...]
-          - rationale: str
-          - estimated_time_s: float
-        """
+    async def propose(self, telemetry: Dict[str, Any], goal: Dict[str, float], nl_task: str,
+                      last_governance: Optional[Dict[str, Any]] = None) -> ActionProposal:
         if not self.api_key:
-            raise RuntimeError("GEMINI_API_KEY is not set")
+            return self._deterministic_proposal(telemetry, goal)
 
-        goal_text = f"GOAL: {json.dumps(goal)}" if goal else "No specific coordinate goal."
+        prompt = f"""You are the high-level reasoning layer for a simulated mobile robot.
 
-        prompt = f"""You are the high-level reasoning layer for a simulated mobile robot
-operating in a warehouse with a 30×20m geofence, obstacles, and a human worker.
+TASK: {nl_task}
 
-INSTRUCTION FROM OPERATOR:
-{instruction}
+WORLD STATE: {json.dumps(telemetry, indent=2)}
 
-CURRENT STATE (telemetry JSON):
-{json.dumps(telemetry, indent=2)}
+GOAL: {json.dumps(goal)}
+
+Output STRICT JSON: {{"intent":"MOVE_TO|STOP|WAIT","params":{{...}},"rationale":"..."}}
+"""
+        for model in self.model_cascade:
+            logger.info(f"Trying model: {model}")
+            text = await self._call_gemini(model, prompt)
+            if text:
+                try:
+                    obj = _extract_json(text)
+                    proposal = ActionProposal(**obj)
+                    if proposal.intent == "MOVE_TO":
+                        p = proposal.params or {}
+                        p["x"] = float(p.get("x", goal.get("x", 0)))
+                        p["y"] = float(p.get("y", goal.get("y", 0)))
+                        p["max_speed"] = max(0.1, min(1.0, float(p.get("max_speed", 0.5))))
+                        proposal.params = p
+                    proposal.rationale = f"[{model}] {proposal.rationale}"
+                    return proposal
+                except Exception as e:
+                    logger.warning(f"Parse failed {model}: {e}")
+        return self._deterministic_proposal(telemetry, goal)
+
+    async def generate_plan(self, telemetry: Dict[str, Any], instruction: str,
+                            goal: Optional[Dict[str, float]] = None) -> Dict[str, Any]:
+        if not self.api_key:
+            return self._deterministic_plan(telemetry, goal)
+
+        goal_text = f"GOAL: {json.dumps(goal)}" if goal else "No specific goal."
+        prompt = f"""You are a robot planner in a 30x20m warehouse.
+
+INSTRUCTION: {instruction}
+
+STATE: {json.dumps(telemetry, indent=2)}
 
 {goal_text}
 
-CONSTRAINTS:
-- Max speed 0.1–1.0 m/s
-- Reduce speed near humans/obstacles
-- Stay within geofence (0-30 x, 0-20 y)
-- Allowed intents per waypoint: MOVE_TO, STOP, WAIT
-
-Generate a MULTI-WAYPOINT plan as STRICT JSON (no markdown):
-
-{{
-  "waypoints": [
-    {{"x": <float>, "y": <float>, "max_speed": <float>}},
-    ...
-  ],
-  "rationale": "<short explanation of the plan>",
-  "estimated_time_s": <float>
-}}
-
-Keep the plan to 2-6 waypoints. The last waypoint should be the final destination.
+Output STRICT JSON:
+{{"waypoints": [{{"x": <float>, "y": <float>, "max_speed": <float>}}, ...], "rationale": "...", "estimated_time_s": <float>}}
 """
-
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent"
-        headers = {
-            "x-goog-api-key": self.api_key,
-            "Content-Type": "application/json",
-        }
-        payload = {
-            "contents": [{"parts": [{"text": prompt}]}],
-            "generationConfig": {
-                "temperature": 0.3,
-                "thinkingConfig": {"thinkingBudget": 0},
-            },
-        }
-
-        async with httpx.AsyncClient(timeout=self.timeout_s) as client:
-            r = await client.post(url, headers=headers, json=payload)
-            if r.status_code >= 400:
-                raise RuntimeError(f"Gemini error {r.status_code}: {r.text[:400]}")
-            data = r.json()
-
-        text = ""
-        try:
-            text = data["candidates"][0]["content"]["parts"][0].get("text", "")
-        except Exception:
-            text = json.dumps(data)[:800]
-
-        obj = _extract_json(text)
-
-        # Validate & clamp waypoints
-        waypoints = obj.get("waypoints", [])
-        for wp in waypoints:
-            wp["x"] = max(0.0, min(30.0, float(wp.get("x", 0))))
-            wp["y"] = max(0.0, min(20.0, float(wp.get("y", 0))))
-            wp["max_speed"] = max(0.1, min(1.0, float(wp.get("max_speed", 0.5))))
-
-        return {
-            "waypoints": waypoints,
-            "rationale": str(obj.get("rationale", "")),
-            "estimated_time_s": float(obj.get("estimated_time_s", 0)),
-        }
+        for model in self.model_cascade:
+            logger.info(f"Trying plan model: {model}")
+            text = await self._call_gemini(model, prompt)
+            if text:
+                try:
+                    obj = _extract_json(text)
+                    waypoints = obj.get("waypoints", [])
+                    for wp in waypoints:
+                        wp["x"] = max(0.0, min(30.0, float(wp.get("x", 0))))
+                        wp["y"] = max(0.0, min(20.0, float(wp.get("y", 0))))
+                        wp["max_speed"] = max(0.1, min(1.0, float(wp.get("max_speed", 0.5))))
+                    return {
+                        "waypoints": waypoints,
+                        "rationale": f"[{model}] {obj.get('rationale', '')}",
+                        "estimated_time_s": float(obj.get("estimated_time_s", 0)),
+                        "model_used": model,
+                    }
+                except Exception as e:
+                    logger.warning(f"Plan parse failed {model}: {e}")
+        return self._deterministic_plan(telemetry, goal)
