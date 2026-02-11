@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
+from typing import Optional
 
 from app.deps import get_db
 from app.db.models import Run, Event, Mission
@@ -17,6 +19,21 @@ run_svc: RunService | None = None
 def get_run_svc() -> RunService:
     assert run_svc is not None, "RunService not initialized"
     return run_svc
+
+
+# --- Backward-compatible endpoint ---
+# Old frontend builds call POST /runs with {"mission_id": "..."}
+class _LegacyRunStart(BaseModel):
+    mission_id: str
+    goal_x: Optional[float] = None
+    goal_y: Optional[float] = None
+
+
+@router.post("/runs", response_model=RunStartResponse)
+async def start_run_legacy(body: _LegacyRunStart, db: Session = Depends(get_db)):
+    """Backward-compatible: accepts POST /runs {mission_id} and proxies to the
+    canonical /missions/{id}/start handler."""
+    return await start_run(body.mission_id, db)
 
 
 @router.post("/missions/{mission_id}/start", response_model=RunStartResponse)
