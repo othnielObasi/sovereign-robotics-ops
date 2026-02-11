@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useState } from "react";
+import { listMissions, createMission, startRun } from "@/lib/api";
 
 // API configuration
 const API_URL = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8080";
@@ -83,19 +84,9 @@ export default function HomePage() {
     setError(null);
     
     try {
-      const res = await fetch(`${API_URL}/missions`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title, goal: { x: goalX, y: goalY } })
-      });
-      
-      if (res.ok) {
-        const data = await res.json();
-        setMissions(prev => [data, ...prev]);
-        setTitle("Deliver to Bay 3");
-      } else {
-        throw new Error('Failed to create mission');
-      }
+      const data = await createMission({ title, goal: { x: goalX, y: goalY } });
+      setMissions(prev => [data, ...prev]);
+      setTitle("Deliver to Bay 3");
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -106,17 +97,10 @@ export default function HomePage() {
   // Start run
   async function handleStartRun(missionId: string) {
     try {
-      const res = await fetch(`${API_URL}/missions/${missionId}/start`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' }
-      });
-      
-      if (res.ok) {
-        const data = await res.json();
-        window.location.href = `/runs/${data.run_id}`;
-      }
-    } catch (e) {
-      setError('Failed to start run');
+      const data = await startRun(missionId);
+      window.location.href = `/runs/${data.run_id}`;
+    } catch (e: any) {
+      setError(e.message || 'Failed to start run');
     }
   }
 
