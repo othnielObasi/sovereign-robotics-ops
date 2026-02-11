@@ -25,6 +25,7 @@ router = APIRouter(prefix="/llm", tags=["llm"])
 class PlanRequest(BaseModel):
     instruction: str = Field(..., description="Natural-language instruction for the robot")
     goal: Optional[Dict[str, float]] = Field(None, description="Optional {x, y} goal coordinate")
+    model: Optional[str] = Field(None, description="Preferred starting model (e.g. gemini-2.0-flash). Falls back through cascade.")
 
 
 class ExecuteRequest(BaseModel):
@@ -36,15 +37,18 @@ class ExecuteRequest(BaseModel):
 class AnalyzeRequest(BaseModel):
     events: List[Dict[str, Any]] = Field(..., description="Mission event log entries")
     question: Optional[str] = Field(None, description="Optional operator question about the telemetry")
+    model: Optional[str] = Field(None, description="Preferred starting model. Falls back through cascade.")
 
 
 class SceneRequest(BaseModel):
     scene_description: str = Field(..., description="Text description of the camera/scene")
     include_telemetry: bool = Field(True, description="Include current sim telemetry for context")
+    model: Optional[str] = Field(None, description="Preferred starting model. Falls back through cascade.")
 
 
 class FailureRequest(BaseModel):
     events: List[Dict[str, Any]] = Field(..., description="Mission event log entries")
+    model: Optional[str] = Field(None, description="Preferred starting model. Falls back through cascade.")
 
 
 class Waypoint(BaseModel):
@@ -129,6 +133,19 @@ def _get_planner() -> GeminiPlanner:
     return _planner
 
 
+@router.get("/models")
+async def list_models():
+    """List available Gemini models and the current cascade order."""
+    from app.services.gemini_planner import MODEL_CASCADE
+    planner = _get_planner()
+    return {
+        "primary": planner.primary_model,
+        "cascade": planner.model_cascade,
+        "available": MODEL_CASCADE,
+        "deterministic_fallback": True,
+    }
+
+
 @router.post("/plan", response_model=PlanResponse)
 async def generate_plan(body: PlanRequest):
     """Generate a multi-waypoint plan via Gemini and validate every waypoint
@@ -150,7 +167,7 @@ async def generate_plan(body: PlanRequest):
 
     planner = _get_planner()
     try:
-        plan = await planner.generate_plan(telemetry, body.instruction, body.goal)
+        plan = await planner.generate_plan(telemetry, body.instruction, body.goal, preferred_model=body.model)
     except Exception as e:
         logger.exception("Gemini plan generation failed")
         raise HTTPException(status_code=502, detail=f"Gemini plan generation failed: {e}")
@@ -296,7 +313,7 @@ async def analyze_telemetry(body: AnalyzeRequest):
         raise HTTPException(status_code=400, detail="No events provided for analysis.")
     planner = _get_planner()
     try:
-        result = await planner.analyze_telemetry(body.events, body.question)
+        result = await planner.analyze_telemetry(body.events, body.question, preferred_model=body.model)
     except Exception as e:
         logger.exception("Telemetry analysis failed")
         raise HTTPException(status_code=502, detail=f"Analysis failed: {e}")
@@ -317,7 +334,7 @@ async def analyze_scene(body: SceneRequest):
             pass
     planner = _get_planner()
     try:
-        result = await planner.analyze_scene(body.scene_description, telemetry)
+        result = await planner.analyze_scene(body.scene_description, telemetry, preferred_model=body.model)
     except Exception as e:
         logger.exception("Scene analysis failed")
         raise HTTPException(status_code=502, detail=f"Scene analysis failed: {e}")
@@ -348,7 +365,7 @@ async def failure_analysis(body: FailureRequest):
         raise HTTPException(status_code=502, detail=f"Cannot reach simulator: {e}")
     planner = _get_planner()
     try:
-        result = await planner.detect_failures(body.events, telemetry)
+        result = await planner.detect_failures(body.events, telemetry, preferred_model=body.model)
     except Exception as e:
         logger.exception("Failure analysis failed")
         raise HTTPException(status_code=502, detail=f"Failure analysis failed: {e}")

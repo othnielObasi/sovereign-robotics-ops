@@ -42,6 +42,14 @@ class GeminiPlanner:
             m for m in MODEL_CASCADE if m != self.primary_model
         ]
 
+    def _get_cascade(self, preferred_model: Optional[str] = None) -> List[str]:
+        """Return model cascade starting from preferred_model, preserving fallback order."""
+        if not preferred_model or preferred_model not in MODEL_CASCADE:
+            return self.model_cascade
+        # Start from the preferred model, then continue with remaining in cascade order
+        remaining = [m for m in self.model_cascade if m != preferred_model]
+        return [preferred_model] + remaining
+
     async def _call_gemini(self, model: str, prompt: str) -> Optional[str]:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
         headers = {"x-goog-api-key": self.api_key, "Content-Type": "application/json"}
@@ -88,7 +96,8 @@ class GeminiPlanner:
         }
 
     async def propose(self, telemetry: Dict[str, Any], goal: Dict[str, float], nl_task: str,
-                      last_governance: Optional[Dict[str, Any]] = None) -> ActionProposal:
+                      last_governance: Optional[Dict[str, Any]] = None,
+                      preferred_model: Optional[str] = None) -> ActionProposal:
         if not self.api_key:
             return self._deterministic_proposal(telemetry, goal)
 
@@ -102,7 +111,7 @@ GOAL: {json.dumps(goal)}
 
 Output STRICT JSON: {{"intent":"MOVE_TO|STOP|WAIT","params":{{...}},"rationale":"..."}}
 """
-        for model in self.model_cascade:
+        for model in self._get_cascade(preferred_model):
             logger.info(f"Trying model: {model}")
             text = await self._call_gemini(model, prompt)
             if text:
@@ -122,7 +131,8 @@ Output STRICT JSON: {{"intent":"MOVE_TO|STOP|WAIT","params":{{...}},"rationale":
         return self._deterministic_proposal(telemetry, goal)
 
     async def generate_plan(self, telemetry: Dict[str, Any], instruction: str,
-                            goal: Optional[Dict[str, float]] = None) -> Dict[str, Any]:
+                            goal: Optional[Dict[str, float]] = None,
+                            preferred_model: Optional[str] = None) -> Dict[str, Any]:
         if not self.api_key:
             return self._deterministic_plan(telemetry, goal)
 
@@ -138,7 +148,7 @@ STATE: {json.dumps(telemetry, indent=2)}
 Output STRICT JSON:
 {{"waypoints": [{{"x": <float>, "y": <float>, "max_speed": <float>}}, ...], "rationale": "...", "estimated_time_s": <float>}}
 """
-        for model in self.model_cascade:
+        for model in self._get_cascade(preferred_model):
             logger.info(f"Trying plan model: {model}")
             text = await self._call_gemini(model, prompt)
             if text:
@@ -246,7 +256,8 @@ Output STRICT JSON:
     # ---- NEW: Telemetry log analysis ----
 
     async def analyze_telemetry(self, events: List[Dict[str, Any]],
-                                 question: Optional[str] = None) -> Dict[str, Any]:
+                                 question: Optional[str] = None,
+                                 preferred_model: Optional[str] = None) -> Dict[str, Any]:
         """Analyze mission telemetry logs for anomalies, patterns, and safety insights."""
         if not self.api_key:
             return self._deterministic_analysis(events)
@@ -274,7 +285,7 @@ Output STRICT JSON:
   "compliance_notes": ["<note 1>"]
 }}
 """
-        for model in self.model_cascade:
+        for model in self._get_cascade(preferred_model):
             logger.info(f"Trying analyze model: {model}")
             text = await self._call_gemini(model, prompt)
             if text:
@@ -289,7 +300,8 @@ Output STRICT JSON:
     # ---- NEW: Multimodal scene analysis ----
 
     async def analyze_scene(self, scene_description: str,
-                            telemetry: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+                            telemetry: Optional[Dict[str, Any]] = None,
+                            preferred_model: Optional[str] = None) -> Dict[str, Any]:
         """Analyze a scene (camera description or sensor data) for hazards."""
         if not self.api_key:
             return self._deterministic_scene(scene_description)
@@ -313,7 +325,7 @@ Output STRICT JSON:
   "reasoning": "..."
 }}
 """
-        for model in self.model_cascade:
+        for model in self._get_cascade(preferred_model):
             logger.info(f"Trying scene model: {model}")
             text = await self._call_gemini(model, prompt)
             if text:
@@ -328,7 +340,8 @@ Output STRICT JSON:
     # ---- NEW: Failure detection & adaptation ----
 
     async def detect_failures(self, events: List[Dict[str, Any]],
-                               telemetry: Dict[str, Any]) -> Dict[str, Any]:
+                               telemetry: Dict[str, Any],
+                               preferred_model: Optional[str] = None) -> Dict[str, Any]:
         """Detect failure patterns: stuck robots, oscillating behavior, repeated policy conflicts."""
         if not self.api_key:
             return self._deterministic_failure(events, telemetry)
@@ -355,7 +368,7 @@ Output STRICT JSON:
   "health_status": "<OK|WARNING|CRITICAL>"
 }}
 """
-        for model in self.model_cascade:
+        for model in self._get_cascade(preferred_model):
             logger.info(f"Trying failure-detection model: {model}")
             text = await self._call_gemini(model, prompt)
             if text:

@@ -123,11 +123,19 @@ export async function triggerScenario(scenario: string) {
   return r.json();
 }
 
-export async function generateLLMPlan(instruction: string, goal?: { x: number; y: number }) {
+// ---- LLM: Models ----
+
+export async function listLLMModels() {
+  const r = await fetch(`${API_BASE}/llm/models`, { cache: "no-store" });
+  if (!r.ok) throw new Error(await parseErrorResponse(r, "Failed to list models"));
+  return r.json();
+}
+
+export async function generateLLMPlan(instruction: string, goal?: { x: number; y: number }, model?: string) {
   const r = await fetch(`${API_BASE}/llm/plan`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ instruction, goal: goal || null }),
+    body: JSON.stringify({ instruction, goal: goal || null, model: model || null }),
   });
   if (!r.ok) throw new Error(await parseErrorResponse(r, "Failed to generate LLM plan"));
   return r.json();
@@ -149,11 +157,11 @@ export async function executeLLMPlan(
 
 // ---- LLM: Telemetry Analysis ----
 
-export async function analyzeTelemetry(events: any[], question?: string) {
+export async function analyzeTelemetry(events: any[], question?: string, model?: string) {
   const r = await fetch(`${API_BASE}/llm/analyze`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ events, question: question || null }),
+    body: JSON.stringify({ events, question: question || null, model: model || null }),
   });
   if (!r.ok) throw new Error(await parseErrorResponse(r, "Failed to analyze telemetry"));
   return r.json();
@@ -161,11 +169,11 @@ export async function analyzeTelemetry(events: any[], question?: string) {
 
 // ---- LLM: Scene Analysis (Multimodal) ----
 
-export async function analyzeScene(sceneDescription: string, includeTelemetry: boolean = true) {
+export async function analyzeScene(sceneDescription: string, includeTelemetry: boolean = true, model?: string) {
   const r = await fetch(`${API_BASE}/llm/scene`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ scene_description: sceneDescription, include_telemetry: includeTelemetry }),
+    body: JSON.stringify({ scene_description: sceneDescription, include_telemetry: includeTelemetry, model: model || null }),
   });
   if (!r.ok) throw new Error(await parseErrorResponse(r, "Failed to analyze scene"));
   return r.json();
@@ -173,11 +181,11 @@ export async function analyzeScene(sceneDescription: string, includeTelemetry: b
 
 // ---- LLM: Failure Detection ----
 
-export async function detectFailures(events: any[]) {
+export async function detectFailures(events: any[], model?: string) {
   const r = await fetch(`${API_BASE}/llm/failure-analysis`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ events }),
+    body: JSON.stringify({ events, model: model || null }),
   });
   if (!r.ok) throw new Error(await parseErrorResponse(r, "Failed to detect failures"));
   return r.json();
