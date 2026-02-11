@@ -842,9 +842,9 @@ export default function RunPage({ params }: { params: { runId: string } }) {
       </div>
 
       {/* Agentic Reasoning Panel */}
-      <Card title="🤖 Agentic Planner (ReAct)" className="col-span-full">
+      <Card title="🤖 Agentic Planner" className="col-span-full">
         <p className="text-xs text-slate-500 mb-3">
-          Multi-step reasoning agent with tool use, memory, and automatic replanning on policy denial.
+          Autonomous planning agent: assesses environment → validates policy → proposes safe action. Replans on denial.
         </p>
         <div className="flex gap-2 mb-3">
           <input
@@ -869,34 +869,23 @@ export default function RunPage({ params }: { params: { runId: string } }) {
           </div>
         )}
 
-        {/* Live thought chain from WebSocket during active runs */}
+        {/* Live agent status from WebSocket during active runs */}
         {liveThoughtChain.length > 0 && !agenticResult && (
           <div className="mb-3">
             <div className="text-xs font-semibold text-purple-400 mb-2 flex items-center gap-2">
               <span className="w-2 h-2 bg-purple-400 rounded-full animate-pulse" />
-              Live Reasoning Chain
+              Agent Running
             </div>
-            <div className="space-y-1.5 max-h-48 overflow-y-auto">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs text-slate-400">{liveThoughtChain.length} step{liveThoughtChain.length !== 1 ? "s" : ""}</span>
               {liveThoughtChain.map((step: any, i: number) => (
-                <div key={i} className="bg-purple-500/5 border border-purple-500/15 rounded-lg p-2 text-xs">
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className="bg-purple-500/20 text-purple-300 px-1.5 py-0.5 rounded font-mono text-[10px]">
-                      Step {step.step_number || i + 1}
-                    </span>
-                    {step.action && (
-                      <span className="bg-slate-700 text-cyan-300 px-1.5 py-0.5 rounded font-mono text-[10px]">
-                        {step.action}
-                      </span>
-                    )}
-                  </div>
-                  {step.thought && <div className="text-slate-300 mb-1">💭 {step.thought}</div>}
-                  {step.observation && (
-                    <div className="text-slate-500 font-mono text-[10px] bg-slate-900/60 rounded p-1.5 max-h-16 overflow-y-auto">
-                      {typeof step.observation === "string" ? step.observation : JSON.stringify(step.observation, null, 1)}
-                    </div>
-                  )}
-                </div>
+                <span key={i} className="bg-slate-700 text-cyan-300 px-1.5 py-0.5 rounded font-mono text-[10px]">
+                  {step.action || "think"}
+                </span>
               ))}
+              {liveThoughtChain[liveThoughtChain.length - 1]?.action === "submit_action" && (
+                <span className="text-green-400 text-xs font-semibold">✓ Submitted</span>
+              )}
             </div>
           </div>
         )}
@@ -911,36 +900,30 @@ export default function RunPage({ params }: { params: { runId: string } }) {
               </div>
             )}
 
-            {/* Thought chain */}
+            {/* Agent summary — tools used + step count (no raw chain-of-thought) */}
             {agenticResult.thought_chain && agenticResult.thought_chain.length > 0 && (
               <div>
-                <div className="text-xs font-semibold text-purple-400 mb-2">Reasoning Chain</div>
-                <div className="space-y-1.5 max-h-64 overflow-y-auto">
-                  {agenticResult.thought_chain.map((step: any, i: number) => (
-                    <div key={i} className="bg-purple-500/5 border border-purple-500/15 rounded-lg p-2 text-xs">
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className="bg-purple-500/20 text-purple-300 px-1.5 py-0.5 rounded font-mono text-[10px]">
-                          Step {step.step_number || i + 1}
-                        </span>
-                        {step.action && (
-                          <span className="bg-slate-700 text-cyan-300 px-1.5 py-0.5 rounded font-mono text-[10px]">
-                            {step.action}
-                          </span>
-                        )}
-                      </div>
-                      {step.thought && <div className="text-slate-300 mb-1">💭 {step.thought}</div>}
-                      {step.action_input && (
-                        <div className="text-slate-400 font-mono text-[10px] mb-1">
-                          Input: {typeof step.action_input === "string" ? step.action_input : JSON.stringify(step.action_input)}
-                        </div>
-                      )}
-                      {step.observation && (
-                        <div className="text-slate-500 font-mono text-[10px] bg-slate-900/60 rounded p-1.5 max-h-20 overflow-y-auto">
-                          {typeof step.observation === "string" ? step.observation : JSON.stringify(step.observation, null, 1)}
-                        </div>
-                      )}
-                    </div>
-                  ))}
+                <div className="text-xs font-semibold text-purple-400 mb-2">Agent Summary</div>
+                <div className="bg-purple-500/5 border border-purple-500/15 rounded-lg p-3 text-xs">
+                  <div className="flex flex-wrap items-center gap-2 mb-2">
+                    <span className="text-slate-400">{agenticResult.thought_chain.length} reasoning step{agenticResult.thought_chain.length !== 1 ? "s" : ""}</span>
+                    <span className="text-slate-600">|</span>
+                    <span className="text-slate-400">Tools used:</span>
+                    {[...new Set(agenticResult.thought_chain.map((s: any) => s.action).filter(Boolean))].map((tool: string, i: number) => (
+                      <span key={i} className={`px-1.5 py-0.5 rounded font-mono text-[10px] ${
+                        tool === "submit_action" ? "bg-green-500/20 text-green-300" :
+                        tool === "check_policy" ? "bg-cyan-500/20 text-cyan-300" :
+                        tool === "replan" || tool === "graceful_stop" ? "bg-amber-500/20 text-amber-300" :
+                        "bg-slate-700 text-slate-300"
+                      }`}>
+                        {tool}
+                      </span>
+                    ))}
+                  </div>
+                  {/* Final decision line */}
+                  {agenticResult.thought_chain[agenticResult.thought_chain.length - 1]?.action === "graceful_stop" && (
+                    <div className="text-amber-400 text-xs mt-1">⚠ Agent could not find a safe plan — manual override recommended</div>
+                  )}
                 </div>
               </div>
             )}

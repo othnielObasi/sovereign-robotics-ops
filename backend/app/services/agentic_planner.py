@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import json
 import logging
-import math
 import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
@@ -29,6 +28,11 @@ logger = logging.getLogger("app.agentic_planner")
 
 TOOL_DEFINITIONS = [
     {
+        "name": "get_world_state",
+        "description": "Get current environment state: robot position, human positions, obstacle positions, zone info, geofence boundaries.",
+        "parameters": {},
+    },
+    {
         "name": "check_policy",
         "description": "Pre-check whether a proposed action would pass governance policies. Returns the predicted decision (APPROVED/DENIED/NEEDS_REVIEW) and any policy hits.",
         "parameters": {
@@ -39,36 +43,14 @@ TOOL_DEFINITIONS = [
         },
     },
     {
-        "name": "get_world_state",
-        "description": "Get current environment state: robot position, human positions, obstacle positions, zone info, geofence boundaries.",
-        "parameters": {},
-    },
-    {
-        "name": "calculate_distance",
-        "description": "Calculate distance between two points and check if path is clear of obstacles.",
-        "parameters": {
-            "from_x": "float",
-            "from_y": "float",
-            "to_x": "float",
-            "to_y": "float",
-        },
-    },
-    {
-        "name": "decompose_task",
-        "description": "Break a high-level instruction into ordered sub-goals. Use this for complex multi-step tasks.",
-        "parameters": {
-            "instruction": "string — the high-level task",
-        },
-    },
-    {
         "name": "submit_action",
-        "description": "Submit your final action proposal. Call this when you've finished reasoning and are ready to act.",
+        "description": "Submit your final action proposal. Call this ONLY after check_policy returns APPROVED.",
         "parameters": {
             "intent": "MOVE_TO|STOP|WAIT",
             "x": "float (if MOVE_TO)",
             "y": "float (if MOVE_TO)",
             "max_speed": "float (if MOVE_TO, 0.1-1.0)",
-            "rationale": "string — explain your reasoning",
+            "rationale": "string — brief explanation (max 30 words)",
         },
     },
 ]
@@ -181,69 +163,6 @@ class ToolExecutor:
             parts.append(f"Human at: ({human.get('x', '?')}, {human.get('y', '?')})")
         return "\n".join(parts)
 
-    def _tool_calculate_distance(self, params: Dict[str, Any]) -> str:
-        """Calculate distance and check for obstacles along path."""
-        fx, fy = float(params.get("from_x", 0)), float(params.get("from_y", 0))
-        tx, ty = float(params.get("to_x", 0)), float(params.get("to_y", 0))
-        d = math.sqrt((tx - fx) ** 2 + (ty - fy) ** 2)
-
-        # Simple obstacle proximity check along the line
-        obstacles = self.world.get("obstacles", [])
-        blocked = False
-        blocking_obs = None
-        for ob in obstacles:
-            ox, oy = float(ob["x"]), float(ob["y"])
-            # Point-to-line-segment distance
-            dx, dy = tx - fx, ty - fy
-            seg_len_sq = dx * dx + dy * dy
-            if seg_len_sq < 1e-6:
-                obs_dist = math.sqrt((ox - fx) ** 2 + (oy - fy) ** 2)
-            else:
-                t_param = max(0, min(1, ((ox - fx) * dx + (oy - fy) * dy) / seg_len_sq))
-                proj_x = fx + t_param * dx
-                proj_y = fy + t_param * dy
-                obs_dist = math.sqrt((ox - proj_x) ** 2 + (oy - proj_y) ** 2)
-            if obs_dist < 1.5:  # within 1.5m of path
-                blocked = True
-                blocking_obs = (ox, oy, obs_dist)
-
-        result = f"Distance: {d:.2f}m."
-        if blocked and blocking_obs:
-            result += f" WARNING: Obstacle at ({blocking_obs[0]}, {blocking_obs[1]}) is {blocking_obs[2]:.1f}m from path — may cause denial."
-        else:
-            result += " Path appears clear of obstacles."
-        return result
-
-    def _tool_decompose_task(self, params: Dict[str, Any]) -> str:
-        """Break instruction into sub-goals (deterministic heuristic)."""
-        instruction = params.get("instruction", "").lower()
-        rx, ry = float(self.telemetry.get("x", 0)), float(self.telemetry.get("y", 0))
-
-        sub_goals = []
-        # Loading bay is y > 12
-        if "bay" in instruction or "loading" in instruction:
-            if ry < 12:
-                sub_goals.append("1. Navigate through aisle to y=12 boundary (stay in clear corridor)")
-                sub_goals.append("2. Cross into loading bay zone (reduce speed to 0.4 m/s)")
-                sub_goals.append("3. Approach target position in loading bay")
-                sub_goals.append("4. STOP at destination")
-            else:
-                sub_goals.append("1. Navigate to target position in loading bay")
-                sub_goals.append("2. STOP at destination")
-        elif "avoid" in instruction or "around" in instruction:
-            sub_goals.append("1. Check obstacle and human positions")
-            sub_goals.append("2. Plan waypoints that maintain >1.5m clearance from all obstacles")
-            sub_goals.append("3. Reduce speed near humans (<0.4 m/s within 3m)")
-            sub_goals.append("4. Navigate via waypoints to target")
-            sub_goals.append("5. STOP at destination")
-        else:
-            sub_goals.append("1. Check current environment for hazards")
-            sub_goals.append("2. Plan direct path to goal")
-            sub_goals.append("3. Navigate to goal with safe speed")
-            sub_goals.append("4. STOP at destination")
-
-        return "Sub-goals:\n" + "\n".join(sub_goals)
-
 
 # ─── Agent Memory ──────────────────────────────────────────────────────────
 
@@ -280,18 +199,14 @@ class AgentMemory:
 
 class AgenticPlanner:
     """
-    ReAct-style agentic planner that reasons, uses tools, and replans.
+    ReAct-style agentic planner — fast, safe, predictable.
 
-    The agent runs a multi-step reasoning loop:
-    1. Receives task + environment state + memory
-    2. Reasons about what to do (THOUGHT)
-    3. Calls a tool (ACTION) — check_policy, get_world_state, calculate_distance, decompose_task
-    4. Observes the result (OBSERVATION)
-    5. Repeats steps 2-4 until it calls submit_action
-    6. If governance denies, feeds denial reason back and replans (up to MAX_REPLAN attempts)
+    3-tool pipeline: get_world_state → check_policy → submit_action
+    Max 3 reasoning steps per attempt, 2 replan attempts on denial.
+    Graceful failure: returns WAIT + manual override recommendation if unsafe.
     """
 
-    MAX_STEPS = 6       # max reasoning steps per attempt
+    MAX_STEPS = 3       # max reasoning steps per attempt (fast for demos)
     MAX_REPLANS = 2     # max times to replan after denial
 
     def __init__(self):
@@ -322,51 +237,42 @@ You MUST propose a DIFFERENT action that avoids the denied policies. Do NOT repe
 Consider: different route, lower speed, waiting, or requesting a human override.
 """
 
-        return f"""You are an autonomous warehouse robot AI agent with tool-use capabilities.
+        return f"""You are an autonomous warehouse robot AI planning agent.
 
-YOUR TASK: {nl_task}
-GOAL: Navigate to ({goal.get('x', '?')}, {goal.get('y', '?')})
+TASK: {nl_task}
+GOAL POSITION: ({goal.get('x', '?')}, {goal.get('y', '?')})
 
 CURRENT STATE:
 - Position: ({telemetry.get('x', '?')}, {telemetry.get('y', '?')})
-- Speed: {telemetry.get('speed', 0)} m/s
-- Zone: {telemetry.get('zone', '?')}
-- Human detected: {telemetry.get('human_detected', False)} (distance: {telemetry.get('human_distance_m', '?')}m)
+- Speed: {telemetry.get('speed', 0)} m/s | Zone: {telemetry.get('zone', '?')}
+- Human: {telemetry.get('human_detected', False)} at {telemetry.get('human_distance_m', '?')}m
 - Nearest obstacle: {telemetry.get('nearest_obstacle_m', '?')}m
 
-MEMORY (learn from past decisions):
 {memory_text}
 {denial_text}
-AVAILABLE TOOLS:
+TOOLS (use in order: get_world_state → check_policy → submit_action):
 {tool_text}
 
-POLICY RULES TO RESPECT:
+POLICY RULES:
 - Geofence: x[0-30], y[0-20] — STOP if outside
-- Aisle zone (y<12): max speed 0.5 m/s
-- Loading bay (y>12): max speed 0.4 m/s
-- Human within 1m: FULL STOP
-- Human within 3m: max speed 0.4 m/s
-- Obstacle clearance: minimum 0.5m
+- Aisle (y<12): max 0.5 m/s | Loading bay (y>12): max 0.4 m/s
+- Human <1m: STOP | Human <3m: max 0.4 m/s
+- Obstacle clearance: min 0.5m
 
-INSTRUCTIONS:
-Use the ReAct pattern: Think, then use a tool, observe the result, repeat.
-You MUST use check_policy before submitting any MOVE_TO action.
-When ready, call submit_action with your final decision.
+HARD CONSTRAINTS (never violate):
+- You CANNOT move the robot directly — you only propose actions
+- You CANNOT override or bypass safety policies
+- You MUST accept policy rejections and replan with different parameters
+- If you cannot find a safe plan after retrying, respond with WAIT and rationale "Unable to generate safe plan — recommend manual override"
 
-OUTPUT FORMAT — Respond with a JSON array of reasoning steps:
+Respond with a JSON array of exactly 3 steps:
 [
-  {{"thought": "I need to check where the human is...", "action": "get_world_state", "action_input": {{}}}},
-  {{"thought": "The human is 2.5m away, I should slow down...", "action": "check_policy", "action_input": {{"intent": "MOVE_TO", "x": 15, "y": 10, "max_speed": 0.4}}}},
-  {{"thought": "Policy check passed. I'll submit this action.", "action": "submit_action", "action_input": {{"intent": "MOVE_TO", "x": 15, "y": 10, "max_speed": 0.4, "rationale": "Moving to goal at reduced speed due to nearby human."}}}}
+  {{"thought": "brief assessment", "action": "get_world_state", "action_input": {{}}}},
+  {{"thought": "brief policy reasoning", "action": "check_policy", "action_input": {{"intent": "MOVE_TO", "x": 15, "y": 10, "max_speed": 0.4}}}},
+  {{"thought": "brief conclusion", "action": "submit_action", "action_input": {{"intent": "MOVE_TO", "x": 15, "y": 10, "max_speed": 0.4, "rationale": "Concise reason."}}}}
 ]
 
-RULES:
-- ALWAYS check_policy before submit_action for MOVE_TO
-- Use calculate_distance to verify paths are clear
-- If near a human (<3m), reduce max_speed to 0.4
-- If near a human (<1m), use STOP intent
-- Maximum {self.MAX_STEPS} reasoning steps
-- You MUST end with submit_action
+Keep each thought under 30 words. ALWAYS check_policy before submit_action.
 """
 
     async def propose(
@@ -405,7 +311,11 @@ RULES:
 
             # Call LLM
             result_text = None
-            for model in self._llm._get_cascade():
+            # Prefer Flash for speed in demos; fall back through cascade
+            agent_cascade = ["gemini-2.5-flash"] + [
+                m for m in self._llm._get_cascade() if m != "gemini-2.5-flash"
+            ]
+            for model in agent_cascade:
                 logger.info(f"[Agentic] Trying {model} (attempt {replan_attempt + 1})")
                 result_text = await self._llm._call_gemini(model, prompt)
                 if result_text:
@@ -478,9 +388,23 @@ RULES:
             from app.policies.rules_python import evaluate_policies
             pre_check = evaluate_policies(telemetry, proposal)
 
-            if pre_check.decision == "APPROVED" or replan_attempt >= self.MAX_REPLANS:
-                # Either approved or we've exhausted replanning attempts
+            if pre_check.decision == "APPROVED":
                 return proposal, all_thoughts, model_used
+
+            if replan_attempt >= self.MAX_REPLANS:
+                # Exhausted replans — return safe WAIT with manual override recommendation
+                fallback = ActionProposal(
+                    intent="WAIT",
+                    params={},
+                    rationale=f"[{model_used}/agentic] Unable to generate safe plan after {self.MAX_REPLANS + 1} attempts — recommend manual override.",
+                )
+                all_thoughts.append(ThoughtStep(
+                    step_number=len(all_thoughts) + 1,
+                    thought="Exhausted replanning attempts. Recommending manual override.",
+                    action="graceful_stop",
+                    observation="Returning WAIT — operator should review and intervene.",
+                ))
+                return fallback, all_thoughts, model_used
 
             # Governance would deny — replan with feedback
             hits = ", ".join(pre_check.policy_hits)
