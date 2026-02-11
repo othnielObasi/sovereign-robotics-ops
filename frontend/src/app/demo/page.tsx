@@ -413,16 +413,11 @@ export default function SovereignDashboard() {
 
   return (
     <div className="min-h-screen bg-slate-900 text-white p-3">
-      {/* Header */}
+      {/* Demo Status Bar */}
       <div className="flex items-center justify-between mb-3 pb-3 border-b border-slate-700">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 bg-gradient-to-br from-cyan-500 to-blue-600 rounded-xl flex items-center justify-center shadow-lg shadow-cyan-500/30">
-            <span className="text-white font-bold text-lg">S</span>
-          </div>
-          <div>
-            <h1 className="text-lg font-bold">Sovereign Robotics Ops</h1>
-            <p className="text-xs text-slate-400">Track 1: Autonomous Robotics Control</p>
-          </div>
+          <h1 className="text-lg font-bold">Interactive Demo</h1>
+          <p className="text-xs text-slate-400">Simulated Governance Scenarios</p>
         </div>
         
         {/* Connection Status */}
@@ -640,12 +635,6 @@ export default function SovereignDashboard() {
           </div>
         </>
       )}
-
-      {/* Footer */}
-      <div className="mt-3 pt-3 border-t border-slate-700 flex justify-between text-xs text-slate-500">
-        <span>Sovereign AI Labs • Runtime Governance Layer</span>
-        <span>Ready for Gemini Robotics 1.5 API</span>
-      </div>
     </div>
   );
 }

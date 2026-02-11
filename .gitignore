@@ -5,3 +5,7 @@ __pycache__/
 *.pyc
 *.egg-info/
 .pytest_cache/
+
+# Database
+*.db
+backend/data/

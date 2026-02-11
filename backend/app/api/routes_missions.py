@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from typing import List
 
 from app.deps import get_db
+from app.auth.jwt import get_current_user
 from app.services.mission_service import MissionService
 from app.schemas.mission import MissionCreate, MissionOut
 
@@ -14,7 +15,11 @@ svc = MissionService()
 
 
 @router.post("/missions", response_model=MissionOut)
-def create_mission(payload: MissionCreate, db: Session = Depends(get_db)):
+def create_mission(
+    payload: MissionCreate,
+    db: Session = Depends(get_db),
+    user: str | None = Depends(get_current_user),
+):
     m = svc.create(db, payload)
     return MissionOut(
         id=m.id,
@@ -46,7 +51,11 @@ def get_mission(mission_id: str, db: Session = Depends(get_db)):
 
 
 @router.delete("/missions/{mission_id}")
-def delete_mission(mission_id: str, db: Session = Depends(get_db)):
+def delete_mission(
+    mission_id: str,
+    db: Session = Depends(get_db),
+    user: str | None = Depends(get_current_user),
+):
     m = svc.get(db, mission_id)
     if not m:
         raise HTTPException(status_code=404, detail="mission not found")

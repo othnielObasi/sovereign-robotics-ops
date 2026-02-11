@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from typing import List, Optional
 
 from app.deps import get_db
+from app.auth.jwt import get_current_user
 from app.db.models import Run, Event, Mission, TelemetrySample
 from app.schemas.run import RunOut, RunStartResponse
 from app.schemas.events import EventOut
@@ -28,14 +29,22 @@ class _LegacyRunStart(BaseModel):
 
 
 @router.post("/runs", response_model=RunStartResponse)
-async def start_run_legacy(body: _LegacyRunStart, db: Session = Depends(get_db)):
+async def start_run_legacy(
+    body: _LegacyRunStart,
+    db: Session = Depends(get_db),
+    user: str | None = Depends(get_current_user),
+):
     """Backward-compatible: accepts POST /runs {mission_id} and proxies to the
     canonical /missions/{id}/start handler."""
     return await start_run(body.mission_id, db)
 
 
 @router.post("/missions/{mission_id}/start", response_model=RunStartResponse)
-async def start_run(mission_id: str, db: Session = Depends(get_db)):
+async def start_run(
+    mission_id: str,
+    db: Session = Depends(get_db),
+    user: str | None = Depends(get_current_user),
+):
     mission = db.query(Mission).filter(Mission.id == mission_id).first()
     if not mission:
         raise HTTPException(status_code=404, detail="Mission not found")
@@ -79,7 +88,11 @@ def get_run(run_id: str, db: Session = Depends(get_db)):
 
 
 @router.post("/runs/{run_id}/stop")
-async def stop_run(run_id: str, db: Session = Depends(get_db)):
+async def stop_run(
+    run_id: str,
+    db: Session = Depends(get_db),
+    user: str | None = Depends(get_current_user),
+):
     svc = get_run_svc()
     await svc.stop_run(db, run_id)
     return {"ok": True}
@@ -133,3 +146,32 @@ def list_telemetry(
         {"id": r.id, "run_id": r.run_id, "ts": r.ts.isoformat(), "payload": json.loads(r.payload_json)}
         for r in rows
     ]
+
+
+@router.get("/runs/{run_id}/replay")
+def replay_run(
+    run_id: str,
+    include_telemetry: bool = Query(False, description="Include raw telemetry samples"),
+    db: Session = Depends(get_db),
+):
+    """Return the full timeline of a run for audit replay, including chain integrity verification."""
+    from app.services.replay_service import get_run_timeline
+
+    timeline = get_run_timeline(db, run_id, include_telemetry=include_telemetry)
+    if not timeline:
+        raise HTTPException(status_code=404, detail="Run not found")
+    return timeline
+
+
+@router.get("/runs/{run_id}/audit-bundle")
+def audit_bundle(
+    run_id: str,
+    db: Session = Depends(get_db),
+):
+    """Export a self-contained audit bundle for regulatory submission."""
+    from app.services.replay_service import export_audit_bundle
+
+    bundle = export_audit_bundle(db, run_id)
+    if not bundle:
+        raise HTTPException(status_code=404, detail="Run not found")
+    return bundle

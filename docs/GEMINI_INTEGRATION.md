@@ -145,9 +145,9 @@
 - `GET /governance/policies` - List active policies
 - `WS /ws/{run_id}` - Real-time updates
 
-### Gemini Adapter
-- `gemini_adapter.py` - Intercepts Gemini commands
-- `GeminiGovernanceAdapter.execute_command()` - Full pipeline
+### Gemini Planner
+- `gemini_planner.py` - Calls Gemini Robotics-ER 1.5 API to generate ActionProposals
+- `AgentRouter` in `agent_service.py` - Routes to Gemini or mock planner
 
 ### Dashboard
 - Same UI works for mock AND Gemini
