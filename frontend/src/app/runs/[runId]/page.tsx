@@ -6,12 +6,39 @@ import { Map2D } from "@/components/Map2D";
 import { wsUrlForRun } from "@/lib/ws";
 import type { WsMessage } from "@/lib/types";
 
-function Card({ title, children }: { title: string; children: React.ReactNode }) {
+function Card({ title, children, className = "" }: { title: string; children: React.ReactNode; className?: string }) {
   return (
-    <div style={{ border: "1px solid #eee", borderRadius: 12, padding: 12, background: "white" }}>
-      <div style={{ fontWeight: 700, marginBottom: 8 }}>{title}</div>
+    <div className={`bg-slate-800 border border-slate-700 rounded-xl p-5 ${className}`}>
+      <div className="font-bold text-sm text-slate-300 uppercase tracking-wide mb-3">{title}</div>
       {children}
     </div>
+  );
+}
+
+function StatusBadge({ status }: { status: string }) {
+  const s = status.toLowerCase();
+  const color = s === "running" ? "bg-green-500/20 text-green-400 border-green-500/30"
+    : s === "stopped" ? "bg-red-500/20 text-red-400 border-red-500/30"
+    : "bg-slate-700 text-slate-400 border-slate-600";
+  return (
+    <span className={`text-xs font-medium px-3 py-1 rounded-full border ${color}`}>
+      {status || "—"}
+    </span>
+  );
+}
+
+function SafetyBadge({ state, detail }: { state: string; detail: string }) {
+  const map: Record<string, string> = {
+    OK: "bg-green-500/20 text-green-400 border-green-500/30",
+    STOP: "bg-red-500/20 text-red-400 border-red-500/30",
+    SLOW: "bg-yellow-500/20 text-yellow-400 border-yellow-500/30",
+    REPLAN: "bg-blue-500/20 text-blue-400 border-blue-500/30",
+  };
+  const cls = map[state] || map.OK;
+  return (
+    <span className={`text-xs font-semibold px-3 py-1 rounded-full border ${cls}`}>
+      {state}{state !== "OK" ? ` — ${detail}` : ""}
+    </span>
   );
 }
 
@@ -29,14 +56,16 @@ export default function RunPage({ params }: { params: { runId: string } }) {
   const wsRef = useRef<WebSocket | null>(null);
 
   async function refreshEvents() {
-    const rows = await listEvents(runId);
-    setEvents(rows);
+    try {
+      const rows = await listEvents(runId);
+      setEvents(rows);
+    } catch (_) {}
   }
 
   useEffect(() => {
     (async () => {
-      setRun(await getRun(runId));
-      setWorld(await getWorld());
+      try { setRun(await getRun(runId)); } catch (_) {}
+      try { setWorld(await getWorld()); } catch (_) {}
       await refreshEvents();
     })();
   }, [runId]);
@@ -46,30 +75,21 @@ export default function RunPage({ params }: { params: { runId: string } }) {
     const ws = new WebSocket(url);
     wsRef.current = ws;
 
-    ws.onopen = () => {
-      // send ping to keep WS route's loop alive
-      ws.send("hello");
-    };
+    ws.onopen = () => { ws.send("hello"); };
 
     ws.onmessage = (ev) => {
       const msg: WsMessage = JSON.parse(ev.data);
       if (msg.kind === "telemetry") setTelemetry(msg.data);
       if (msg.kind === "alert") setAlerts((a) => [{ ts: Date.now(), ...msg.data }, ...a].slice(0, 20));
-      if (msg.kind === "event") {
-        // refresh timeline; for MVP, simplest is to re-fetch stored events
-        refreshEvents();
-      }
+      if (msg.kind === "event") refreshEvents();
       if (msg.kind === "status") setStatus(msg.data.status);
-      // keep connection alive (server expects receives)
       try { ws.send("ping"); } catch {}
     };
 
     ws.onerror = () => {};
     ws.onclose = () => {};
 
-    return () => {
-      try { ws.close(); } catch {}
-    };
+    return () => { try { ws.close(); } catch {} };
   }, [runId]);
 
   useEffect(() => {
@@ -84,7 +104,6 @@ export default function RunPage({ params }: { params: { runId: string } }) {
     t = setInterval(tick, 1500);
     return () => { if (t) clearInterval(t); };
   }, [runId]);
-
 
   async function onStop() {
     await stopRun(runId);
@@ -115,63 +134,120 @@ export default function RunPage({ params }: { params: { runId: string } }) {
     return { state: "OK", detail: "Within policy" };
   }, [lastDecision]);
 
+  const currentStatus = status || run?.status || "—";
 
   return (
-    <div style={{ maxWidth: 1100 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <h2 style={{ marginTop: 0 }}>Run: {runId}</h2>
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <span style={{ fontSize: 12, color: "#666" }}>Status: {status || run?.status || "—"}</span>
-          <button onClick={onStop}>Stop</button>
+    <div className="max-w-7xl mx-auto px-4 py-6">
+      {/* Header */}
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h1 className="text-2xl font-bold text-white">
+            Run: <span className="text-cyan-400 font-mono">{runId}</span>
+          </h1>
+          {run?.mission_id && (
+            <p className="text-sm text-slate-400 mt-1">Mission: {run.mission_id}</p>
+          )}
+        </div>
+        <div className="flex items-center gap-4">
+          <StatusBadge status={currentStatus} />
+          <SafetyBadge state={safety.state} detail={safety.detail} />
+          {currentStatus !== "stopped" && (
+            <button
+              onClick={onStop}
+              className="bg-red-500 hover:bg-red-600 text-white text-sm font-semibold px-4 py-2 rounded-lg transition"
+            >
+              Stop Run
+            </button>
+          )}
         </div>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+      {/* Top Row: Map + Telemetry */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
         <Card title="2D Map (Simulation)">
-          <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-            <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-              <label style={{ fontSize: 12, color: '#444', display: 'flex', gap: 6, alignItems: 'center' }}>
-                <input type="checkbox" checked={showHeatmap} onChange={(e) => setShowHeatmap(e.target.checked)} />
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-4">
+              <label className="text-xs text-slate-400 flex items-center gap-1.5 cursor-pointer">
+                <input type="checkbox" checked={showHeatmap} onChange={(e) => setShowHeatmap(e.target.checked)} className="accent-cyan-500" />
                 Risk heatmap
               </label>
-              <label style={{ fontSize: 12, color: '#444', display: 'flex', gap: 6, alignItems: 'center' }}>
-                <input type="checkbox" checked={showTrail} onChange={(e) => setShowTrail(e.target.checked)} />
+              <label className="text-xs text-slate-400 flex items-center gap-1.5 cursor-pointer">
+                <input type="checkbox" checked={showTrail} onChange={(e) => setShowTrail(e.target.checked)} className="accent-cyan-500" />
                 Trail
               </label>
             </div>
-            <div style={{ fontSize: 12, padding: '4px 8px', borderRadius: 999, border: '1px solid #eee', background: safety.state === 'STOP' ? '#fff1f2' : safety.state === 'SLOW' ? '#fffbeb' : safety.state === 'REPLAN' ? '#eef2ff' : '#f0fdf4' }}>
-              <b>{safety.state}</b>{safety.state !== 'OK' ? ` — ${safety.detail}` : ''}
-            </div>
           </div>
           <Map2D world={world} telemetry={telemetry} pathPoints={pathPoints} showHeatmap={showHeatmap} showTrail={showTrail} safetyState={safety.state} />
+          <p className="text-[10px] text-slate-500 mt-2">
+            Blue: path preview &bull; Red: obstacles &bull; Orange: human clearance &bull; Green: target &bull; Black: robot pose &bull; Trail: breadcrumbs
+          </p>
         </Card>
 
         <Card title="Live Telemetry">
           {!telemetry ? (
-            <div>Waiting for telemetry…</div>
+            <div className="text-slate-500 py-8 text-center">
+              <div className="text-3xl mb-2">📡</div>
+              Waiting for telemetry&hellip;
+            </div>
           ) : (
-            <pre style={{ margin: 0, fontSize: 12, background: "#fafafa", padding: 8, borderRadius: 8, overflowX: "auto" }}>
+            <pre className="text-xs text-green-400 bg-slate-900/60 p-4 rounded-lg overflow-x-auto max-h-80 overflow-y-auto font-mono">
 {JSON.stringify(telemetry, null, 2)}
             </pre>
           )}
         </Card>
+      </div>
 
+      {/* Middle Row: Governance Decision */}
+      <div className="mb-4">
         <Card title="Latest Governance Decision">
           {!lastDecision ? (
-            <div>No decision yet…</div>
+            <div className="text-slate-500 py-4 text-center">
+              <div className="text-3xl mb-2">⏳</div>
+              No decision yet&hellip;
+            </div>
           ) : (
-            <div style={{ fontSize: 13 }}>
-              <div><b>Intent:</b> {lastDecision.proposal?.intent}</div>
-              <div><b>Decision:</b> {lastDecision.governance?.decision}</div>
-              <div><b>Policies:</b> {(lastDecision.governance?.policy_hits || []).join(", ") || "—"}</div>
-              <div><b>Reasons:</b>
-                <ul>
-                  {(lastDecision.governance?.reasons || []).map((r: string, idx: number) => <li key={idx}>{r}</li>)}
-                </ul>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 text-sm">
+              <div>
+                <span className="text-slate-500 text-xs">Intent</span>
+                <div className="font-semibold text-white mt-1">{lastDecision.proposal?.intent || "—"}</div>
               </div>
+              <div>
+                <span className="text-slate-500 text-xs">Decision</span>
+                <div className="mt-1">
+                  <span className={`font-semibold ${
+                    lastDecision.governance?.decision === "APPROVED" ? "text-green-400" :
+                    lastDecision.governance?.decision === "DENIED" ? "text-red-400" : "text-yellow-400"
+                  }`}>
+                    {lastDecision.governance?.decision || "—"}
+                  </span>
+                </div>
+              </div>
+              <div>
+                <span className="text-slate-500 text-xs">Policies Hit</span>
+                <div className="font-mono text-xs text-slate-300 mt-1">
+                  {(lastDecision.governance?.policy_hits || []).join(", ") || "None"}
+                </div>
+              </div>
+              <div>
+                <span className="text-slate-500 text-xs">Risk Score</span>
+                <div className="font-semibold text-white mt-1">
+                  {lastDecision.governance?.risk_score != null
+                    ? (lastDecision.governance.risk_score * 100).toFixed(0) + "%"
+                    : "—"}
+                </div>
+              </div>
+              {lastDecision.governance?.reasons?.length > 0 && (
+                <div className="col-span-full">
+                  <span className="text-slate-500 text-xs">Reasons</span>
+                  <ul className="mt-1 text-sm text-slate-300 list-disc list-inside space-y-0.5">
+                    {lastDecision.governance.reasons.map((r: string, idx: number) => <li key={idx}>{r}</li>)}
+                  </ul>
+                </div>
+              )}
               {lastDecision.governance?.required_action && (
-                <div style={{ background: "#fff7e6", border: "1px solid #ffe0a3", padding: 8, borderRadius: 8 }}>
-                  <b>Required action:</b> {lastDecision.governance.required_action}
+                <div className="col-span-full bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-3">
+                  <span className="text-yellow-400 text-xs font-semibold">Required Action</span>
+                  <div className="text-sm text-yellow-300 mt-1">{lastDecision.governance.required_action}</div>
                 </div>
               )}
             </div>
@@ -179,34 +255,49 @@ export default function RunPage({ params }: { params: { runId: string } }) {
         </Card>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 12 }}>
+      {/* Bottom Row: Alerts + Events */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <Card title="Alerts">
           {alerts.length === 0 ? (
-            <div>No alerts yet.</div>
+            <div className="text-slate-500 py-4 text-center">
+              <div className="text-3xl mb-2">✅</div>
+              No alerts yet.
+            </div>
           ) : (
-            <ul style={{ margin: 0, paddingLeft: 18 }}>
-              {alerts.map((a, i) => <li key={i}>{a.event}</li>)}
+            <ul className="space-y-2 max-h-64 overflow-y-auto">
+              {alerts.map((a, i) => (
+                <li key={i} className="flex items-start gap-2 text-sm bg-red-500/10 border border-red-500/20 rounded-lg p-3">
+                  <span className="text-red-400">⚠️</span>
+                  <span className="text-slate-300">{a.event || JSON.stringify(a)}</span>
+                </li>
+              ))}
             </ul>
           )}
         </Card>
 
-        <Card title="Chain-of-Trust Timeline (Events)">
+        <Card title="Chain-of-Trust Timeline">
           {events.length === 0 ? (
-            <div>No events yet.</div>
+            <div className="text-slate-500 py-4 text-center">
+              <div className="text-3xl mb-2">🔗</div>
+              No events yet.
+            </div>
           ) : (
-            <div style={{ maxHeight: 420, overflowY: "auto" }}>
+            <div className="max-h-80 overflow-y-auto space-y-1">
               {events.map((e) => (
-                <div key={e.id} style={{ borderBottom: "1px solid #f2f2f2", padding: "8px 0" }}>
-                  <div style={{ fontSize: 12, color: "#666" }}>
-                    {new Date(e.ts).toLocaleTimeString()} · <b>{e.type}</b> · {e.hash.slice(0, 18)}…
-                  </div>
-                  <details>
-                    <summary style={{ cursor: "pointer", fontSize: 13 }}>View payload</summary>
-                    <pre style={{ fontSize: 12, background: "#fafafa", padding: 8, borderRadius: 8, overflowX: "auto" }}>
+                <details key={e.id} className="group border-b border-slate-700/50 pb-2">
+                  <summary className="cursor-pointer py-2 flex items-center gap-2 text-sm hover:bg-slate-700/30 rounded px-2 -mx-2">
+                    <span className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                      e.type === "DECISION" ? "bg-cyan-400" :
+                      e.type === "TELEMETRY" ? "bg-green-400" : "bg-yellow-400"
+                    }`} />
+                    <span className="text-slate-400 text-xs font-mono">{new Date(e.ts).toLocaleTimeString()}</span>
+                    <span className="font-semibold text-xs text-slate-300">{e.type}</span>
+                    <span className="text-slate-600 text-xs font-mono ml-auto">{e.hash?.slice(0, 12)}…</span>
+                  </summary>
+                  <pre className="text-xs text-slate-400 bg-slate-900/60 p-3 rounded-lg overflow-x-auto mt-1 font-mono">
 {JSON.stringify(e.payload, null, 2)}
-                    </pre>
-                  </details>
-                </div>
+                  </pre>
+                </details>
               ))}
             </div>
           )}
