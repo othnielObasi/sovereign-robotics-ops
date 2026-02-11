@@ -106,10 +106,9 @@ export default function HomePage() {
   // Start run
   async function handleStartRun(missionId: string) {
     try {
-      const res = await fetch(`${API_URL}/runs`, {
+      const res = await fetch(`${API_URL}/missions/${missionId}/start`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mission_id: missionId })
+        headers: { 'Content-Type': 'application/json' }
       });
       
       if (res.ok) {
