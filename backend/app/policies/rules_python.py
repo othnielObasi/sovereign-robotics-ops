@@ -20,7 +20,7 @@ MIN_CONF_FOR_MOVE = 0.55
 
 # Distance-based human proximity thresholds (Fix 2)
 HUMAN_SLOW_RADIUS_M = 3.0   # slow down when human within this range
-HUMAN_STOP_RADIUS_M = 1.5   # full stop when human within this range
+HUMAN_STOP_RADIUS_M = 1.0   # full stop when human within this range
 
 REVIEW_RISK_THRESHOLD = 0.75
 
