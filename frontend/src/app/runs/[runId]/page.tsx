@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { getRun, listEvents, stopRun, getWorld, getPathPreview, triggerScenario, generateLLMPlan } from "@/lib/api";
+import { getRun, listEvents, stopRun, getWorld, getPathPreview, triggerScenario, generateLLMPlan, executeLLMPlan } from "@/lib/api";
 import { Map2D } from "@/components/Map2D";
 import { wsUrlForRun } from "@/lib/ws";
 import type { WsMessage } from "@/lib/types";
@@ -69,6 +69,8 @@ export default function RunPage({ params }: { params: { runId: string } }) {
   const [llmPlan, setLlmPlan] = useState<any>(null);
   const [llmLoading, setLlmLoading] = useState(false);
   const [llmError, setLlmError] = useState<string | null>(null);
+  const [llmExecResult, setLlmExecResult] = useState<any>(null);
+  const [llmExecuting, setLlmExecuting] = useState(false);
 
   async function refreshEvents() {
     try {
@@ -175,6 +177,7 @@ export default function RunPage({ params }: { params: { runId: string } }) {
     setLlmLoading(true);
     setLlmError(null);
     setLlmPlan(null);
+    setLlmExecResult(null);
     try {
       const plan = await generateLLMPlan(llmInstruction);
       setLlmPlan(plan);
@@ -182,6 +185,25 @@ export default function RunPage({ params }: { params: { runId: string } }) {
       setLlmError(e.message || "Plan generation failed");
     } finally {
       setLlmLoading(false);
+    }
+  }
+
+  async function onExecutePlan() {
+    if (!llmPlan?.waypoints?.length) return;
+    setLlmExecuting(true);
+    setLlmError(null);
+    setLlmExecResult(null);
+    try {
+      const result = await executeLLMPlan(
+        llmInstruction,
+        llmPlan.waypoints,
+        llmPlan.rationale || ""
+      );
+      setLlmExecResult(result);
+    } catch (e: any) {
+      setLlmError(e.message || "Execution failed");
+    } finally {
+      setLlmExecuting(false);
     }
   }
 
@@ -391,6 +413,58 @@ export default function RunPage({ params }: { params: { runId: string } }) {
                     );
                   })}
                 </div>
+
+                {/* Execute Plan Button */}
+                <button
+                  onClick={onExecutePlan}
+                  disabled={llmExecuting || currentStatus === "stopped"}
+                  className="w-full bg-green-500 hover:bg-green-600 disabled:bg-slate-600 text-white text-sm font-semibold py-2.5 rounded-lg transition mt-2"
+                >
+                  {llmExecuting ? "Executing..." : "Execute Plan in Simulation"}
+                </button>
+
+                {/* Execution Results */}
+                {llmExecResult && (
+                  <div className="mt-2 space-y-2">
+                    <div className="flex items-center gap-2">
+                      <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
+                        llmExecResult.status === "completed"
+                          ? "bg-green-500/20 text-green-400 border border-green-500/30"
+                          : llmExecResult.status === "blocked"
+                          ? "bg-red-500/20 text-red-400 border border-red-500/30"
+                          : "bg-yellow-500/20 text-yellow-400 border border-yellow-500/30"
+                      }`}>
+                        Execution: {llmExecResult.status?.toUpperCase()}
+                      </span>
+                    </div>
+
+                    {(llmExecResult.steps || []).map((step: any, i: number) => (
+                      <div key={i} className={`text-xs p-2 rounded-lg ${
+                        step.executed
+                          ? "bg-green-500/10 border border-green-500/20"
+                          : "bg-red-500/10 border border-red-500/20"
+                      }`}>
+                        <div className="flex items-center gap-2">
+                          <span className="font-bold text-purple-400">WP {step.waypoint_index + 1}</span>
+                          <span className={step.executed ? "text-green-400" : "text-red-400"}>
+                            {step.executed ? "Executed" : "Blocked"}
+                          </span>
+                          <span className="text-slate-500">{step.governance_decision}</span>
+                          <span className={`ml-auto font-mono text-[10px] ${
+                            step.policy_state === "SAFE" ? "text-green-400" :
+                            step.policy_state === "SLOW" ? "text-yellow-400" :
+                            step.policy_state === "STOP" ? "text-red-400" : "text-blue-400"
+                          }`}>{step.policy_state}</span>
+                        </div>
+                      </div>
+                    ))}
+
+                    <div className="bg-slate-900/60 rounded-lg p-2 text-xs">
+                      <span className="text-slate-500">Audit Hash: </span>
+                      <span className="text-cyan-400 font-mono">{llmExecResult.audit_hash?.slice(0, 24)}...</span>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>

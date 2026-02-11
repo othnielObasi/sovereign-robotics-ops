@@ -94,3 +94,17 @@ export async function generateLLMPlan(instruction: string, goal?: { x: number; y
   if (!r.ok) throw new Error("Failed to generate LLM plan");
   return r.json();
 }
+
+export async function executeLLMPlan(
+  instruction: string,
+  waypoints: Array<{ x: number; y: number; max_speed: number }>,
+  rationale: string = ""
+) {
+  const r = await fetch(`${API_BASE}/llm/execute`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ instruction, waypoints, rationale }),
+  });
+  if (!r.ok) throw new Error("Failed to execute LLM plan");
+  return r.json();
+}
