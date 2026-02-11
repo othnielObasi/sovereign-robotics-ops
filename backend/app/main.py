@@ -61,6 +61,21 @@ async def lifespan(app: FastAPI):
     logger.info(f"   Gemini: {'✅ Enabled' if settings.gemini_configured else '❌ Disabled (using mock)'}")
     
     init_database()
+
+    # Auto-resume any runs that are still marked "running" in the DB
+    # (they lost their in-memory asyncio tasks during the last deploy/restart)
+    from app.db.session import SessionLocal as _SL
+    from app.db.models import Run as _Run
+    _db = _SL()
+    try:
+        stale = _db.query(_Run).filter(_Run.status == "running").all()
+        for r in stale:
+            logger.info("Startup: auto-resuming run %s", r.id)
+            run_service.ensure_loop_running(r.id, r.status)
+    except Exception as exc:
+        logger.warning("Startup resume failed: %s", exc)
+    finally:
+        _db.close()
     
     yield
     

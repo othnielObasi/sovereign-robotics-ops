@@ -323,45 +323,81 @@ export function Map2D({
       const p = worldToCanvas({ x: rx, y: ry });
 
       const st = String(safetyState).toUpperCase();
+      const safetyRadius = 18;
       if (st === "STOP") {
-        ctx.strokeStyle = "rgba(239, 68, 68, 0.8)";
+        ctx.strokeStyle = "rgba(239, 68, 68, 0.9)";
+        ctx.fillStyle = "rgba(239, 68, 68, 0.15)";
         ctx.lineWidth = 3;
         ctx.beginPath();
-        ctx.arc(p.x, p.y, 14, 0, Math.PI * 2);
+        ctx.arc(p.x, p.y, safetyRadius, 0, Math.PI * 2);
+        ctx.fill();
         ctx.stroke();
       } else if (st === "SLOW") {
-        ctx.strokeStyle = "rgba(245, 158, 11, 0.8)";
+        ctx.strokeStyle = "rgba(245, 158, 11, 0.9)";
+        ctx.fillStyle = "rgba(245, 158, 11, 0.12)";
         ctx.lineWidth = 3;
         ctx.beginPath();
-        ctx.arc(p.x, p.y, 14, 0, Math.PI * 2);
+        ctx.arc(p.x, p.y, safetyRadius, 0, Math.PI * 2);
+        ctx.fill();
         ctx.stroke();
       } else if (st === "REPLAN") {
-        ctx.strokeStyle = "rgba(99, 102, 241, 0.85)";
+        ctx.strokeStyle = "rgba(99, 102, 241, 0.9)";
+        ctx.fillStyle = "rgba(99, 102, 241, 0.12)";
         ctx.lineWidth = 3;
         ctx.beginPath();
-        ctx.arc(p.x, p.y, 14, 0, Math.PI * 2);
+        ctx.arc(p.x, p.y, safetyRadius, 0, Math.PI * 2);
+        ctx.fill();
         ctx.stroke();
       }
 
-      ctx.fillStyle = "#111827";
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, 6, 0, Math.PI * 2);
-      ctx.fill();
-
-      ctx.strokeStyle = "#111827";
+      // Robot body — larger, filled circle with border
+      ctx.fillStyle = "#0ea5e9";
+      ctx.strokeStyle = "#0c4a6e";
       ctx.lineWidth = 2;
       ctx.beginPath();
-      ctx.moveTo(p.x, p.y);
-      ctx.lineTo(p.x + Math.cos(rt) * 14, p.y - Math.sin(rt) * 14);
+      ctx.arc(p.x, p.y, 10, 0, Math.PI * 2);
+      ctx.fill();
       ctx.stroke();
+
+      // Direction arrow
+      ctx.strokeStyle = "#0c4a6e";
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.moveTo(p.x, p.y);
+      const arrowLen = 18;
+      const ax = p.x + Math.cos(rt) * arrowLen;
+      const ay = p.y - Math.sin(rt) * arrowLen;
+      ctx.lineTo(ax, ay);
+      ctx.stroke();
+      // Arrowhead
+      const headLen = 6;
+      const angle = Math.atan2(-(ay - p.y), ax - p.x);
+      ctx.beginPath();
+      ctx.moveTo(ax, ay);
+      ctx.lineTo(ax - headLen * Math.cos(angle - 0.4), ay + headLen * Math.sin(angle - 0.4));
+      ctx.moveTo(ax, ay);
+      ctx.lineTo(ax - headLen * Math.cos(angle + 0.4), ay + headLen * Math.sin(angle + 0.4));
+      ctx.stroke();
+
+      // Robot label
+      ctx.fillStyle = "#0c4a6e";
+      ctx.font = "bold 9px ui-sans-serif, system-ui";
+      ctx.textAlign = "center";
+      ctx.fillText("ROBOT", p.x, p.y - 14);
+      ctx.textAlign = "start";
 
       const tgt = telemetry.target;
       if (tgt && typeof tgt.x === "number" && typeof tgt.y === "number") {
         const tp = worldToCanvas({ x: Number(tgt.x), y: Number(tgt.y) });
         ctx.fillStyle = "#10b981";
         ctx.beginPath();
-        ctx.arc(tp.x, tp.y, 5, 0, Math.PI * 2);
+        ctx.arc(tp.x, tp.y, 6, 0, Math.PI * 2);
         ctx.fill();
+        ctx.fillStyle = "#065f46";
+        ctx.font = "bold 8px ui-sans-serif, system-ui";
+        ctx.textAlign = "center";
+        ctx.fillText("TGT", tp.x, tp.y - 9);
+        ctx.textAlign = "start";
       }
     }
 

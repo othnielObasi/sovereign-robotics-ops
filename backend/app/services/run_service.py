@@ -85,11 +85,28 @@ class RunService:
         db.commit()
         db.refresh(run)
 
-        stop_event = asyncio.Event()
-        self._stop_flags[run.id] = stop_event
-
-        self._tasks[run.id] = asyncio.create_task(self._run_loop(run.id))
+        self._launch_loop(run.id)
         return run
+
+    def _launch_loop(self, run_id: str) -> None:
+        """Spawn the asyncio run-loop task for a given run."""
+        if run_id in self._tasks and not self._tasks[run_id].done():
+            return  # already running
+        stop_event = asyncio.Event()
+        self._stop_flags[run_id] = stop_event
+        self._tasks[run_id] = asyncio.create_task(self._run_loop(run_id))
+        logger.info("Launched run loop task for %s", run_id)
+
+    def ensure_loop_running(self, run_id: str, db_status: str) -> None:
+        """If the run is 'running' in DB but has no active asyncio task,
+        re-launch the loop.  This handles process restarts / deploys."""
+        if db_status != "running":
+            return
+        existing = self._tasks.get(run_id)
+        if existing and not existing.done():
+            return  # already alive
+        logger.info("Auto-resuming stale run loop for %s", run_id)
+        self._launch_loop(run_id)
 
     async def stop_run(self, db: Session, run_id: str) -> None:
         if run_id in self._stop_flags:

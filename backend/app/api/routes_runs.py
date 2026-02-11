@@ -78,6 +78,9 @@ def get_run(run_id: str, db: Session = Depends(get_db)):
     run = db.query(Run).filter(Run.id == run_id).first()
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
+    # Auto-resume the run loop if it was lost due to a deploy/restart
+    svc = get_run_svc()
+    svc.ensure_loop_running(run.id, run.status)
     return RunOut(
         id=run.id,
         mission_id=run.mission_id,
