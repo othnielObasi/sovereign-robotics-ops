@@ -9,6 +9,7 @@ import {
   deleteMission,
   pauseMission,
   resumeMission,
+  replayMission,
 } from "@/lib/api";
 import { useRouter } from "next/navigation";
 import type { Mission, MissionStatus } from "@/lib/types";
@@ -75,6 +76,15 @@ export default function MissionsPage() {
   async function handleResume(id: string) {
     try {
       const updated = await resumeMission(id);
+      setMissions((prev) => prev.map((m) => (m.id === id ? updated : m)));
+    } catch (e: any) {
+      setError(e.message);
+    }
+  }
+
+  async function handleReplay(id: string) {
+    try {
+      const updated = await replayMission(id);
       setMissions((prev) => prev.map((m) => (m.id === id ? updated : m)));
     } catch (e: any) {
       setError(e.message);
@@ -273,6 +283,14 @@ export default function MissionsPage() {
                             🔄 Re-run
                           </button>
                         </>
+                      )}
+                      {m.status === "completed" && (
+                        <button
+                          onClick={() => handleReplay(m.id)}
+                          className="bg-cyan-500 hover:bg-cyan-600 text-white px-3 py-1.5 rounded-lg font-medium transition text-xs"
+                        >
+                          🔄 Replay
+                        </button>
                       )}
                       {(m.status === "draft" || m.status === "paused" || m.status === "completed") && (
                         <button

@@ -17,6 +17,23 @@ class Mission(Base):
     updated_at = Column(DateTime(timezone=True), nullable=True)
 
     runs = relationship("Run", back_populates="mission", cascade="all, delete-orphan")
+    audit_logs = relationship("MissionAudit", back_populates="mission", cascade="all, delete-orphan")
+
+
+class MissionAudit(Base):
+    """Immutable audit trail for every change to a mission."""
+    __tablename__ = "mission_audit"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    mission_id = Column(String, ForeignKey("missions.id"), index=True, nullable=False)
+    ts = Column(DateTime(timezone=True), nullable=False)
+    action = Column(String, nullable=False)  # CREATED|UPDATED|STATUS_CHANGE|DELETED|REPLAYED
+    actor = Column(String, nullable=True, default="system")  # user or system
+    old_values = Column(Text, nullable=True)  # JSON snapshot of changed fields before
+    new_values = Column(Text, nullable=True)  # JSON snapshot of changed fields after
+    details = Column(Text, nullable=True)  # human-readable description
+
+    mission = relationship("Mission", back_populates="audit_logs")
 
 
 class Run(Base):

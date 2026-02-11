@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pydantic import BaseModel, Field
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 import datetime as dt
 
 
@@ -22,3 +22,14 @@ class MissionOut(BaseModel):
     status: str = "draft"
     created_at: dt.datetime
     updated_at: Optional[dt.datetime] = None
+
+
+class MissionAuditOut(BaseModel):
+    id: int
+    mission_id: str
+    ts: dt.datetime
+    action: str
+    actor: Optional[str] = "system"
+    old_values: Optional[Dict[str, Any]] = None
+    new_values: Optional[Dict[str, Any]] = None
+    details: Optional[str] = None

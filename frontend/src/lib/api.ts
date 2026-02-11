@@ -136,3 +136,21 @@ export async function executeLLMPlan(
   if (!r.ok) throw new Error("Failed to execute LLM plan");
   return r.json();
 }
+
+export async function replayMission(missionId: string) {
+  const r = await fetch(`${API_BASE}/missions/${missionId}/replay`, { method: "POST" });
+  if (!r.ok) throw new Error("Failed to replay mission");
+  return r.json();
+}
+
+export async function getMissionAudit(missionId: string) {
+  const r = await fetch(`${API_BASE}/missions/${missionId}/audit`, { cache: "no-store" });
+  if (!r.ok) throw new Error("Failed to get mission audit");
+  return r.json();
+}
+
+export async function getAllAudit(limit = 100, offset = 0) {
+  const r = await fetch(`${API_BASE}/audit/missions?limit=${limit}&offset=${offset}`, { cache: "no-store" });
+  if (!r.ok) throw new Error("Failed to get audit trail");
+  return r.json();
+}
