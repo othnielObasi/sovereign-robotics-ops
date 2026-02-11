@@ -1,7 +1,9 @@
 {
   "version": 2,
   "framework": "nextjs",
-  "buildCommand": "npm run build",
+  "installCommand": "cd frontend && npm install",
+  "buildCommand": "cd frontend && npm run build",
+  "outputDirectory": "frontend/.next",
   "env": {
     "NEXT_PUBLIC_API_BASE": "https://sovereign-robotics-ops.fly.dev"
   }
