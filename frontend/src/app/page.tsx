@@ -3,7 +3,7 @@
 import React, { useEffect, useState } from "react";
 
 // API configuration
-const API_URL = process.env.NEXT_PUBLIC_API_URL || '';
+const API_URL = process.env.NEXT_PUBLIC_API_BASE || '';
 
 interface Mission {
   id: string;
