@@ -43,6 +43,7 @@ def init_database(max_retries: int = 5, retry_delay: int = 2):
             # Ensure prev_hash column exists on events table
             # (may be missing if table was created before the column was added)
             _ensure_prev_hash_column()
+            _ensure_mission_columns()
 
             return True
             
@@ -77,6 +78,39 @@ def _ensure_prev_hash_column():
                 logger.info("prev_hash column already exists")
     except Exception as e:
         logger.warning("Could not add prev_hash column: %s", e)
+
+
+def _ensure_mission_columns():
+    """Add status and updated_at columns to missions table if missing."""
+    try:
+        with engine.connect() as conn:
+            # status column
+            result = conn.execute(text(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name = 'missions' AND column_name = 'status'"
+            ))
+            if result.fetchone() is None:
+                logger.info("Adding status column to missions table")
+                conn.execute(text(
+                    "ALTER TABLE missions ADD COLUMN status VARCHAR DEFAULT 'draft'"
+                ))
+                conn.commit()
+                logger.info("✅ missions.status column added")
+
+            # updated_at column
+            result = conn.execute(text(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name = 'missions' AND column_name = 'updated_at'"
+            ))
+            if result.fetchone() is None:
+                logger.info("Adding updated_at column to missions table")
+                conn.execute(text(
+                    "ALTER TABLE missions ADD COLUMN updated_at TIMESTAMP WITH TIME ZONE"
+                ))
+                conn.commit()
+                logger.info("✅ missions.updated_at column added")
+    except Exception as e:
+        logger.warning("Could not add mission columns: %s", e)
 
 
 @asynccontextmanager

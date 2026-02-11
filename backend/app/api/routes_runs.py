@@ -48,8 +48,13 @@ async def start_run(
     mission = db.query(Mission).filter(Mission.id == mission_id).first()
     if not mission:
         raise HTTPException(status_code=404, detail="Mission not found")
+    if getattr(mission, "status", "draft") == "deleted":
+        raise HTTPException(status_code=400, detail="Cannot start a deleted mission")
     svc = get_run_svc()
     run = svc.start_run(db, mission_id)
+    # Mark mission as executing
+    mission.status = "executing"
+    db.commit()
     return RunStartResponse(run_id=run.id)
 
 

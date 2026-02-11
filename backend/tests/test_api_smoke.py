@@ -68,8 +68,14 @@ def test_delete_mission(client: TestClient):
     assert r.status_code == 200
     assert r.json()["ok"] is True
 
+    # Soft-deleted missions still exist but are excluded from list
     r2 = client.get(f"/missions/{mid}")
-    assert r2.status_code == 404
+    assert r2.status_code == 200
+    assert r2.json()["status"] == "deleted"
+
+    # Ensure deleted missions don't appear in list
+    listed = client.get("/missions").json()
+    assert mid not in [m["id"] for m in listed]
 
 
 def test_list_policies(client: TestClient):

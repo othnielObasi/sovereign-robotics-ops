@@ -209,6 +209,9 @@ class RunService:
                     if proposal.intent == "STOP" and gov_decision.decision == "APPROVED":
                         run.status = "completed"
                         run.ended_at = utc_now()
+                        # Also mark the parent mission as completed
+                        if mission:
+                            mission.status = "completed"
                         db.commit()
                         if self._ws_broadcast:
                             await self._ws_broadcast(run_id, {"kind": "status", "data": {"status": "completed"}})

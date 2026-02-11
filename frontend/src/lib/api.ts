@@ -16,6 +16,34 @@ export async function createMission(payload: any) {
   return r.json();
 }
 
+export async function updateMission(missionId: string, payload: { title?: string; goal?: any }) {
+  const r = await fetch(`${API_BASE}/missions/${missionId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!r.ok) throw new Error("Failed to update mission");
+  return r.json();
+}
+
+export async function deleteMission(missionId: string) {
+  const r = await fetch(`${API_BASE}/missions/${missionId}`, { method: "DELETE" });
+  if (!r.ok) throw new Error("Failed to delete mission");
+  return r.json();
+}
+
+export async function pauseMission(missionId: string) {
+  const r = await fetch(`${API_BASE}/missions/${missionId}/pause`, { method: "POST" });
+  if (!r.ok) throw new Error("Failed to pause mission");
+  return r.json();
+}
+
+export async function resumeMission(missionId: string) {
+  const r = await fetch(`${API_BASE}/missions/${missionId}/resume`, { method: "POST" });
+  if (!r.ok) throw new Error("Failed to resume mission");
+  return r.json();
+}
+
 export async function startRun(missionId: string) {
   const r = await fetch(`${API_BASE}/missions/${missionId}/start`, { method: "POST" });
   if (!r.ok) throw new Error("Failed to start run");

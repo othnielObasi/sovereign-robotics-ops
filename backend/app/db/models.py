@@ -12,7 +12,9 @@ class Mission(Base):
     id = Column(String, primary_key=True, index=True)
     title = Column(String, nullable=False)
     goal_json = Column(Text, nullable=False)
+    status = Column(String, nullable=False, default="draft")  # draft|executing|paused|completed|deleted
     created_at = Column(DateTime(timezone=True), nullable=False)
+    updated_at = Column(DateTime(timezone=True), nullable=True)
 
     runs = relationship("Run", back_populates="mission", cascade="all, delete-orphan")
 
