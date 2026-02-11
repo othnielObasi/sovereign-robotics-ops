@@ -15,11 +15,12 @@ logger = logging.getLogger("app.gemini_planner")
 
 _JSON_RE = re.compile(r"(\{.*\}|\[.*\])", re.DOTALL)
 
-# Model cascade: robotics-er (primary) → pro → flash → deterministic fallback
+# Model cascade: robotics-er (primary) → flash variants → deterministic fallback
 MODEL_CASCADE: List[str] = [
     "gemini-robotics-er-1.5-preview",  # Primary: robotics-specialized
-    "gemini-2.5-pro-preview-05-06",    # Fallback 1: deep reasoning
-    "gemini-2.0-flash",                # Fallback 2: fast, high quota
+    "gemini-2.5-flash",                # Fallback 1: fast, good quota
+    "gemini-2.5-flash-lite",           # Fallback 2: lightweight, high quota
+    "gemini-3-flash-preview",          # Fallback 3: next-gen flash
 ]
 
 
@@ -55,7 +56,7 @@ class GeminiPlanner:
         headers = {"x-goog-api-key": self.api_key, "Content-Type": "application/json"}
         payload = {
             "contents": [{"parts": [{"text": prompt}]}],
-            "generationConfig": {"temperature": 0.2, "thinkingConfig": {"thinkingBudget": 0}},
+            "generationConfig": {"temperature": 0.2},
         }
         try:
             async with httpx.AsyncClient(timeout=self.timeout_s) as client:

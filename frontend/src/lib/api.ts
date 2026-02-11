@@ -60,6 +60,13 @@ export async function startRun(missionId: string) {
   return r.json();
 }
 
+export async function listRuns(missionId?: string) {
+  const params = missionId ? `?mission_id=${missionId}&limit=1` : '';
+  const r = await fetch(`${API_BASE}/runs${params}`, { cache: "no-store" });
+  if (!r.ok) throw new Error(await parseErrorResponse(r, "Failed to list runs"));
+  return r.json();
+}
+
 export async function getRun(runId: string) {
   const r = await fetch(`${API_BASE}/runs/${runId}`, { cache: "no-store" });
   if (!r.ok) throw new Error(await parseErrorResponse(r, "Failed to get run"));

@@ -3,7 +3,7 @@
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { listMissions, createMission, startRun } from "@/lib/api";
+import { listMissions, createMission, startRun, listRuns } from "@/lib/api";
 import type { Mission, MissionStatus } from "@/lib/types";
 
 // API configuration
@@ -46,6 +46,8 @@ export default function HomePage() {
   const [goalX, setGoalX] = useState(15);
   const [goalY, setGoalY] = useState(7);
   const [creating, setCreating] = useState(false);
+  const [missionRunIds, setMissionRunIds] = useState<Record<string, string>>({});
+  const [missionRunIds, setMissionRunIds] = useState<Record<string, string>>({});
 
   // Check API health
   useEffect(() => {
@@ -82,6 +84,19 @@ export default function HomePage() {
       try {
         const data = await listMissions();
         setMissions(data);
+        // Fetch latest run_id for executing/completed missions
+        const runMap: Record<string, string> = {};
+        await Promise.all(
+          data
+            .filter((m: any) => m.status === 'executing' || m.status === 'completed' || m.status === 'paused')
+            .map(async (m: any) => {
+              try {
+                const runs = await listRuns(m.id);
+                if (runs.length > 0) runMap[m.id] = runs[0].id;
+              } catch {}
+            })
+        );
+        setMissionRunIds(runMap);
       } catch (e) {
         console.error('Failed to fetch missions:', e);
       }
@@ -341,10 +356,26 @@ export default function HomePage() {
                         {m.status === "paused" ? "Resume & Run" : "Execute"}
                       </button>
                     )}
-                    {m.status === "executing" && (
-                      <span className="text-green-400 text-sm font-medium px-3 py-2">Running...</span>
+                    {m.status === "executing" && missionRunIds[m.id] && (
+                      <Link
+                        href={`/runs/${missionRunIds[m.id]}`}
+                        className="bg-green-500/20 border border-green-500/50 text-green-400 hover:bg-green-500/30 px-4 py-2 rounded-lg font-medium transition text-sm"
+                      >
+                        View Live →
+                      </Link>
                     )}
-                    {m.status === "completed" && (
+                    {m.status === "executing" && !missionRunIds[m.id] && (
+                      <span className="text-green-400 text-sm font-medium px-3 py-2 animate-pulse">Running...</span>
+                    )}
+                    {m.status === "completed" && missionRunIds[m.id] && (
+                      <Link
+                        href={`/runs/${missionRunIds[m.id]}`}
+                        className="bg-cyan-500/20 border border-cyan-500/50 text-cyan-400 hover:bg-cyan-500/30 px-4 py-2 rounded-lg font-medium transition text-sm"
+                      >
+                        View Run →
+                      </Link>
+                    )}
+                    {m.status === "completed" && !missionRunIds[m.id] && (
                       <span className="text-cyan-400 text-sm px-3 py-2">Done</span>
                     )}
                   </div>
