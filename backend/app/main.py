@@ -39,6 +39,11 @@ def init_database(max_retries: int = 5, retry_delay: int = 2):
             # Create all tables
             Base.metadata.create_all(bind=engine)
             logger.info("✅ Database initialized successfully")
+
+            # Ensure prev_hash column exists on events table
+            # (may be missing if table was created before the column was added)
+            _ensure_prev_hash_column()
+
             return True
             
         except Exception as e:
@@ -50,6 +55,28 @@ def init_database(max_retries: int = 5, retry_delay: int = 2):
                 # Don't crash - allow app to start, health check will fail
                 return False
     return False
+
+
+def _ensure_prev_hash_column():
+    """Add prev_hash column to events table if it doesn't exist."""
+    try:
+        with engine.connect() as conn:
+            # Check if column exists
+            result = conn.execute(text(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name = 'events' AND column_name = 'prev_hash'"
+            ))
+            if result.fetchone() is None:
+                logger.info("Adding missing prev_hash column to events table")
+                conn.execute(text(
+                    "ALTER TABLE events ADD COLUMN prev_hash VARCHAR DEFAULT ''"
+                ))
+                conn.commit()
+                logger.info("✅ prev_hash column added successfully")
+            else:
+                logger.info("prev_hash column already exists")
+    except Exception as e:
+        logger.warning("Could not add prev_hash column: %s", e)
 
 
 @asynccontextmanager
