@@ -70,6 +70,8 @@ export function Map2D({
   const zones: any[] = world?.zones ?? [];
   const obstacles: any[] = world?.obstacles ?? [];
   const human = world?.human ?? null;
+  const walkingHumans: any[] = telemetry?.walking_humans ?? world?.walking_humans ?? [];
+  const idleRobots: any[] = telemetry?.idle_robots ?? world?.idle_robots ?? [];
 
   const baseScale = useMemo(() => {
     const wx = (geo.max_x - geo.min_x) || 1;
@@ -463,6 +465,81 @@ export function Map2D({
       }
     }
 
+    /* ── walking humans (secondary workers) ──────────────────── */
+    for (const wh of walkingHumans) {
+      if (typeof wh.x !== "number") continue;
+      const p = w2c({ x: +wh.x, y: +wh.y });
+
+      /* soft proximity glow */
+      const gr = 1.5 * baseScale * zoom;
+      ctx.fillStyle = "rgba(245,158,11,0.06)";
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, gr, 0, Math.PI * 2);
+      ctx.fill();
+
+      /* walking animation – small "legs" that alternate */
+      const walkPhase = Math.sin(tick * 0.3 + (wh.x * 7 + wh.y * 13));
+      const legSpread = wh.speed > 0 ? 3 * zoom * walkPhase : 0;
+
+      /* body circle */
+      ctx.fillStyle = "#fbbf24";
+      ctx.strokeStyle = "#92400e";
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 5 * zoom, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+
+      /* head */
+      ctx.beginPath();
+      ctx.arc(p.x, p.y - 2.5 * zoom, 2 * zoom, 0, Math.PI * 2);
+      ctx.strokeStyle = "#92400e";
+      ctx.lineWidth = 1;
+      ctx.stroke();
+
+      /* legs (animated) */
+      ctx.strokeStyle = "#92400e";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(p.x - legSpread, p.y + 3 * zoom);
+      ctx.lineTo(p.x, p.y + 1 * zoom);
+      ctx.lineTo(p.x + legSpread, p.y + 3 * zoom);
+      ctx.stroke();
+
+      /* direction indicator when moving */
+      if (wh.speed > 0 && typeof wh.theta === "number") {
+        const dLen = 8 * zoom;
+        ctx.strokeStyle = "rgba(251,191,36,0.5)";
+        ctx.lineWidth = 1;
+        ctx.setLineDash([2, 2]);
+        ctx.beginPath();
+        ctx.moveTo(p.x, p.y);
+        ctx.lineTo(p.x + Math.cos(wh.theta) * dLen, p.y - Math.sin(wh.theta) * dLen);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+
+      /* name label */
+      const label = wh.label ?? "Worker";
+      ctx.fillStyle = "rgba(251,191,36,0.8)";
+      ctx.font = `${Math.max(7, 8 * zoom)}px system-ui`;
+      ctx.textAlign = "center";
+      ctx.fillText(label, p.x, p.y + 9 * zoom);
+
+      /* distance from robot */
+      if (telemetry && typeof telemetry.x === "number") {
+        const d = dist(
+          { x: +(telemetry.x ?? 0), y: +(telemetry.y ?? 0) },
+          { x: +wh.x, y: +wh.y },
+        );
+        if (d < 5) {
+          ctx.fillStyle = d < 1 ? "#ef4444" : d < 3 ? "#f59e0b" : "#22c55e";
+          ctx.font = `bold ${Math.max(7, 8 * zoom)}px monospace`;
+          ctx.fillText(`${d.toFixed(1)}m`, p.x, p.y + 17 * zoom);
+        }
+      }
+    }
+
     /* ── path preview ───────────────────────────────────────── */
     if (pathPoints && pathPoints.length >= 2) {
       ctx.strokeStyle = "rgba(59,130,246,0.15)";
@@ -533,6 +610,75 @@ export function Map2D({
       ctx.textAlign = "start";
       ctx.textBaseline = "alphabetic";
     }
+
+    /* ── idle robots ──────────────────────────────────────────── */
+    for (const ir of idleRobots) {
+      if (typeof ir.x !== "number") continue;
+      const p = w2c({ x: +ir.x, y: +ir.y });
+
+      /* dim glow */
+      const rg = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, 14);
+      rg.addColorStop(0, "rgba(100,116,139,0.15)");
+      rg.addColorStop(1, "rgba(100,116,139,0)");
+      ctx.fillStyle = rg;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 14, 0, Math.PI * 2);
+      ctx.fill();
+
+      /* body (gray) */
+      const rb = 8;
+      ctx.fillStyle = "#475569";
+      ctx.strokeStyle = "#334155";
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.roundRect(p.x - rb, p.y - rb, rb * 2, rb * 2, 3);
+      ctx.fill();
+      ctx.stroke();
+      /* inner */
+      ctx.fillStyle = "#334155";
+      ctx.beginPath();
+      ctx.roundRect(p.x - 3, p.y - 3, 6, 6, 1.5);
+      ctx.fill();
+      /* center dot */
+      ctx.fillStyle = "#94a3b8";
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 2, 0, Math.PI * 2);
+      ctx.fill();
+
+      /* heading arrow (dim) */
+      const irt = +(ir.theta ?? 0);
+      const al = 14;
+      const ax = p.x + Math.cos(irt) * al;
+      const ay = p.y - Math.sin(irt) * al;
+      ctx.strokeStyle = "rgba(148,163,184,0.4)";
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(p.x, p.y);
+      ctx.lineTo(ax, ay);
+      ctx.stroke();
+
+      /* label */
+      const lbl = ir.label ?? "Robot (Idle)";
+      ctx.fillStyle = "#94a3b8";
+      ctx.font = `bold ${Math.max(7, 8 * zoom)}px system-ui`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "bottom";
+      ctx.fillText(lbl, p.x, p.y - rb - 3);
+
+      /* IDLE badge */
+      const bw = 30;
+      ctx.fillStyle = "#334155";
+      ctx.beginPath();
+      ctx.roundRect(p.x - bw / 2, p.y + rb + 2, bw, 12, 2);
+      ctx.fill();
+      ctx.fillStyle = "#94a3b8";
+      ctx.font = `bold ${Math.max(7, 8 * zoom)}px system-ui`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("IDLE", p.x, p.y + rb + 8);
+    }
+    ctx.textAlign = "start";
+    ctx.textBaseline = "alphabetic";
 
     /* ── robot ──────────────────────────────────────────────── */
     if (telemetry) {
@@ -697,7 +843,9 @@ export function Map2D({
     /* ── Legend (bottom-right) ──────────────────────────────── */
     const legend = [
       { color: C.robot, label: "Robot" },
+      { color: "#475569", label: "Idle Robot" },
       { color: C.human, label: "Human" },
+      { color: "#fbbf24", label: "Workers" },
       { color: C.obstacle, label: "Obstacle" },
       { color: C.path, label: "Path" },
       { color: C.plan, label: "LLM Plan" },
@@ -721,7 +869,7 @@ export function Map2D({
       ctx.textBaseline = "top";
       ctx.fillText(it.label, lx + 12, y);
     });
-  }, [world, telemetry, pathPoints, planWaypoints, baseScale, zoom, pan, showHeatmap, showTrail, safetyState, tick, pad, zones, obstacles, human, geo]);
+  }, [world, telemetry, pathPoints, planWaypoints, baseScale, zoom, pan, showHeatmap, showTrail, safetyState, tick, pad, zones, obstacles, human, walkingHumans, idleRobots, geo]);
 
   return (
     <canvas

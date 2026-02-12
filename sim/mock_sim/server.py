@@ -71,6 +71,60 @@ human_pos: Dict[str, float] = dict(HUMAN_DEFAULT)
 # Extra obstacles injected by scenarios
 extra_obstacles: List[Dict[str, float]] = []
 
+# ---- Additional walking humans (ambient warehouse workers) ----
+# Each has a patrol path and walks between waypoints
+import copy
+
+class WalkingHuman:
+    """A human worker that walks a patrol loop in the warehouse."""
+
+    def __init__(self, name: str, waypoints: List[Dict[str, float]], speed: float = 0.6):
+        self.name = name
+        self.waypoints = waypoints
+        self.speed = speed
+        self.pos = dict(waypoints[0])
+        self.wp_idx = 0
+        self.paused_until = 0.0  # timestamp to pause until (simulates stopping at a shelf)
+
+    def step(self, dt: float) -> None:
+        now = time.time()
+        if now < self.paused_until:
+            return
+        tgt = self.waypoints[self.wp_idx]
+        dx = tgt["x"] - self.pos["x"]
+        dy = tgt["y"] - self.pos["y"]
+        d = math.sqrt(dx * dx + dy * dy)
+        if d < 0.15:
+            # Arrived at waypoint — pause briefly, then move to next
+            self.paused_until = now + random.uniform(1.0, 3.0)
+            self.wp_idx = (self.wp_idx + 1) % len(self.waypoints)
+        else:
+            step = min(self.speed * dt, d)
+            self.pos["x"] += (dx / d) * step
+            self.pos["y"] += (dy / d) * step
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {"x": round(self.pos["x"], 2), "y": round(self.pos["y"], 2), "name": self.name}
+
+
+# Patrol routes that feel natural for a warehouse
+walking_humans: List[WalkingHuman] = [
+    WalkingHuman("Worker A", [
+        {"x": 5, "y": 5}, {"x": 5, "y": 9}, {"x": 10, "y": 9}, {"x": 10, "y": 5},
+    ], speed=0.5),
+    WalkingHuman("Worker B", [
+        {"x": 20, "y": 14}, {"x": 25, "y": 14}, {"x": 25, "y": 18}, {"x": 20, "y": 18},
+    ], speed=0.4),
+    WalkingHuman("Forklift Op", [
+        {"x": 12, "y": 13}, {"x": 22, "y": 13}, {"x": 22, "y": 16}, {"x": 12, "y": 16},
+    ], speed=0.7),
+]
+
+# ---- Second robot (idle in loading bay, for visual realism) ----
+idle_robots: List[Dict[str, Any]] = [
+    {"x": 26.0, "y": 16.0, "theta": 1.57, "speed": 0.0, "label": "R-02 (Idle)", "status": "idle"},
+]
+
 
 state: Dict[str, Any] = {
     "x": 2.0,
@@ -112,13 +166,22 @@ def _nearest_obstacle(x: float, y: float) -> float:
 
 
 def _human_signal(x: float, y: float) -> tuple[bool, float, float]:
-    """Returns (detected, confidence, distance_m)."""
-    d = _dist(human_pos, x, y)
-    detected = d < 5.0  # wider detection radius for distance-based governance
+    """Returns (detected, confidence, distance_m) for the nearest human (primary + walking)."""
+    # Check primary human
+    d_primary = _dist(human_pos, x, y)
+
+    # Check walking humans — find nearest overall
+    d_min = d_primary
+    for wh in walking_humans:
+        d_wh = _dist(wh.pos, x, y)
+        if d_wh < d_min:
+            d_min = d_wh
+
+    detected = d_min < 5.0  # wider detection radius for distance-based governance
     if not detected:
-        return False, 0.0, d
+        return False, 0.0, d_min
     conf = max(0.4, min(0.95, 0.7 + random.uniform(-0.15, 0.15)))
-    return True, conf, d
+    return True, conf, d_min
 
 
 def _step() -> None:
@@ -128,6 +191,10 @@ def _step() -> None:
         return
     state["last_update"] = now
     state["events"] = []
+
+    # Tick walking humans
+    for wh in walking_humans:
+        wh.step(dt)
 
     target = state.get("target")
     if target:
@@ -190,6 +257,8 @@ def telemetry(request: Request):
         "events": state["events"],
         # Enriched fields for Fix 1
         "human": {"x": human_pos["x"], "y": human_pos["y"]},
+        "walking_humans": [wh.to_dict() for wh in walking_humans],
+        "idle_robots": idle_robots,
         "obstacles": _all_obstacles(),
         "bounds": GEOFENCE,
         "timestamp": time.time(),
@@ -204,6 +273,8 @@ def world(request: Request):
         "zones": ZONES,
         "obstacles": _all_obstacles(),
         "human": human_pos,
+        "walking_humans": [wh.to_dict() for wh in walking_humans],
+        "idle_robots": idle_robots,
     }
 
 
