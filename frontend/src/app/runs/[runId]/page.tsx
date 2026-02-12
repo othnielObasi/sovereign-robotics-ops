@@ -107,6 +107,16 @@ export default function RunPage({ params }: { params: { runId: string } }) {
   // AI Intelligence Console tab
   const [aiTab, setAiTab] = useState<"scene" | "telemetry" | "failure">("scene");
 
+  // Replan tracking
+  const [replanCount, setReplanCount] = useState(0);
+  const [lastDenialPolicy, setLastDenialPolicy] = useState<string | null>(null);
+
+  // Autonomous mode
+  const [autonomousMode, setAutonomousMode] = useState(true);
+
+  // Active waypoint tracking during execution
+  const [activeWaypointIdx, setActiveWaypointIdx] = useState<number>(-1);
+
   async function refreshEvents() {
     try {
       const rows = await listEvents(runId);
@@ -215,12 +225,22 @@ export default function RunPage({ params }: { params: { runId: string } }) {
     setAgenticResult(null);
     setLlmPlan(null);
     setLlmExecResult(null);
+    setActiveWaypointIdx(-1);
 
     // Stage 1: Agentic Reasoning
     setPipelineStage("reasoning");
     try {
       const aResult = await agenticPropose(missionInstruction);
       setAgenticResult(aResult);
+      // Track replanning
+      if (aResult.replanning_used) {
+        setReplanCount((c) => c + 1);
+        const deniedStep = (aResult.thought_chain || []).find((s: any) => s.action === "replan");
+        if (deniedStep) {
+          const policyMatch = deniedStep.thought?.match(/Policies?:\s*([A-Z_0-9]+)/i);
+          setLastDenialPolicy(policyMatch ? policyMatch[1] : "POLICY_HIT");
+        }
+      }
     } catch (e: any) {
       setMissionError(e.message || "Reasoning failed");
       setPipelineStage("idle");
@@ -232,6 +252,20 @@ export default function RunPage({ params }: { params: { runId: string } }) {
     try {
       const plan = await generateLLMPlan(missionInstruction);
       setLlmPlan(plan);
+      // If plan has governance failures, auto-replan once
+      if (plan && !plan.all_approved && autonomousMode) {
+        setReplanCount((c) => c + 1);
+        const failedGov = plan.governance?.find((g: any) => g.decision !== "APPROVED");
+        if (failedGov) {
+          setLastDenialPolicy(failedGov.policy_hits?.[0] || "POLICY_HIT");
+        }
+        // Replan with adjusted instruction
+        setPipelineStage("planning");
+        try {
+          const replan = await generateLLMPlan(`${missionInstruction} (avoid policy violations, use slower speed)`);
+          if (replan) setLlmPlan(replan);
+        } catch (_) {}
+      }
       setPipelineStage(plan ? "ready" : "idle");
     } catch (e: any) {
       setMissionError(e.message || "Plan generation failed");
@@ -244,16 +278,24 @@ export default function RunPage({ params }: { params: { runId: string } }) {
     setPipelineStage("executing");
     setMissionError(null);
     setLlmExecResult(null);
+    setActiveWaypointIdx(0);
     try {
       const result = await executeLLMPlan(
         missionInstruction,
         llmPlan.waypoints,
         llmPlan.rationale || ""
       );
+      // Animate through waypoints
+      for (let i = 0; i < (result.steps?.length || 0); i++) {
+        setActiveWaypointIdx(i);
+        await new Promise(r => setTimeout(r, 600));
+      }
       setLlmExecResult(result);
+      setActiveWaypointIdx(-1);
       setPipelineStage("done");
     } catch (e: any) {
       setMissionError(e.message || "Execution failed");
+      setActiveWaypointIdx(-1);
       setPipelineStage("ready");
     }
   }
@@ -440,6 +482,29 @@ export default function RunPage({ params }: { params: { runId: string } }) {
 
           {/* ── Unified AI Mission Planner ── */}
           <Card title="🤖 AI Mission Planner">
+            {/* Autonomous Mode + Memory + Replan badges */}
+            <div className="flex items-center gap-2 mb-2 flex-wrap">
+              <button onClick={() => setAutonomousMode(!autonomousMode)}
+                className={`flex items-center gap-1.5 text-[10px] font-bold px-2.5 py-1 rounded-full border transition ${
+                  autonomousMode
+                    ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/40 shadow-sm shadow-emerald-500/20"
+                    : "bg-slate-700/50 text-slate-400 border-slate-600"
+                }`}>
+                <span className={`w-1.5 h-1.5 rounded-full ${autonomousMode ? "bg-emerald-400 animate-pulse" : "bg-slate-500"}`} />
+                Autonomous: {autonomousMode ? "ON" : "OFF"}
+              </button>
+              {agenticResult?.memory_summary && (
+                <span className="text-[10px] text-slate-400 bg-slate-700/50 px-2 py-1 rounded-full border border-slate-600">
+                  🧠 Memory: {agenticResult.memory_summary.total_entries || 0} decisions retained
+                </span>
+              )}
+              {replanCount > 0 && (
+                <span className="text-[10px] font-semibold text-amber-300 bg-amber-500/15 px-2 py-1 rounded-full border border-amber-500/30">
+                  🔄 Replans: {replanCount}{lastDenialPolicy ? ` — ${lastDenialPolicy}` : ""}
+                </span>
+              )}
+            </div>
+
             {/* Pipeline progress bar */}
             <div className="flex items-center gap-0 mb-3 text-[10px] font-semibold">
               {([
@@ -495,21 +560,60 @@ export default function RunPage({ params }: { params: { runId: string } }) {
               </div>
             )}
 
-            {/* Stage 1 result: Agent Reasoning */}
+            {/* Stage 1 result: Agent Reasoning — STRUCTURED FORMAT */}
             {agenticResult && (
               <div className="space-y-2 mb-3">
                 <div className="text-[10px] uppercase tracking-wide text-slate-500 font-semibold">Reasoning</div>
                 {agenticResult.replanning_used && (
-                  <div className="flex items-center gap-2 text-[10px] bg-amber-500/10 border border-amber-500/20 rounded px-2 py-1">
+                  <div className="flex items-center gap-2 text-[10px] bg-amber-500/10 border border-amber-500/20 rounded px-2 py-1 animate-slide-up">
                     <span>🔄</span><span className="text-amber-300 font-semibold">Replanned after policy denial</span>
+                    {lastDenialPolicy && <span className="text-amber-400/70 font-mono">({lastDenialPolicy})</span>}
                   </div>
                 )}
-                <div className="flex flex-wrap items-center gap-2 bg-purple-500/5 border border-purple-500/15 rounded-lg p-2 text-xs">
-                  <span className="text-slate-400">{agenticResult.thought_chain?.length || 0} steps</span>
-                  <span className="text-slate-600">|</span>
+
+                {/* Structured reasoning display — Goal / Constraints / Strategy / Confidence */}
+                <div className="bg-slate-900/60 border border-purple-500/20 rounded-lg p-3 space-y-1.5 text-xs font-mono">
+                  <div className="flex items-start gap-2">
+                    <span className="text-purple-400 font-bold min-w-[80px]">Goal:</span>
+                    <span className="text-white">{missionInstruction || "—"}</span>
+                  </div>
+                  <div className="flex items-start gap-2">
+                    <span className="text-cyan-400 font-bold min-w-[80px]">Constraints:</span>
+                    <div className="text-slate-300 space-y-0.5">
+                      {world?.human && <div>- Human at ({world.human.x}, {world.human.y})</div>}
+                      {(world?.obstacles || []).slice(0, 2).map((o: any, i: number) => (
+                        <div key={i}>- Obstacle at ({o.x}, {o.y})</div>
+                      ))}
+                      {telemetry && <div>- Zone speed limit: {telemetry.zone === "loading_bay" ? "0.4" : "0.5"} m/s</div>}
+                    </div>
+                  </div>
+                  <div className="flex items-start gap-2">
+                    <span className="text-emerald-400 font-bold min-w-[80px]">Strategy:</span>
+                    <div className="text-slate-300 space-y-0.5">
+                      {(agenticResult.thought_chain || []).filter((s: any) => s.thought && s.action !== "replan").slice(0, 3).map((s: any, i: number) => (
+                        <div key={i}>- {s.thought}</div>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-yellow-400 font-bold min-w-[80px]">Confidence:</span>
+                    <span className={`font-bold ${
+                      agenticResult.governance?.risk_score < 0.3 ? "text-green-400" : agenticResult.governance?.risk_score < 0.7 ? "text-yellow-400" : "text-red-400"
+                    }`}>{(100 - (agenticResult.governance?.risk_score || 0) * 100).toFixed(0)}%</span>
+                    <div className="flex-1 h-1 bg-slate-700 rounded-full overflow-hidden ml-1">
+                      <div className={`h-full rounded-full transition-all duration-500 ${
+                        agenticResult.governance?.risk_score < 0.3 ? "bg-green-500" : agenticResult.governance?.risk_score < 0.7 ? "bg-yellow-500" : "bg-red-500"
+                      }`} style={{ width: `${100 - (agenticResult.governance?.risk_score || 0) * 100}%` }} />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Tool use chips */}
+                <div className="flex flex-wrap items-center gap-2 text-xs">
+                  <span className="text-slate-500 text-[10px]">{agenticResult.thought_chain?.length || 0} steps</span>
                   {[...new Set((agenticResult.thought_chain || []).map((s: any) => s.action).filter(Boolean))].map((tool: string, i: number) => (
                     <span key={i} className={`px-1.5 py-0.5 rounded font-mono text-[10px] ${
-                      tool === "submit_action" ? "bg-green-500/20 text-green-300" : tool === "check_policy" ? "bg-cyan-500/20 text-cyan-300" : tool === "graceful_stop" ? "bg-amber-500/20 text-amber-300" : "bg-slate-700 text-slate-300"
+                      tool === "submit_action" ? "bg-green-500/20 text-green-300" : tool === "check_policy" ? "bg-cyan-500/20 text-cyan-300" : tool === "graceful_stop" ? "bg-amber-500/20 text-amber-300" : tool === "replan" ? "bg-red-500/20 text-red-300" : "bg-slate-700 text-slate-300"
                     }`}>{tool}</span>
                   ))}
                   {agenticResult.proposal && (
@@ -520,6 +624,8 @@ export default function RunPage({ params }: { params: { runId: string } }) {
                     </>
                   )}
                 </div>
+
+                {/* Governance inline */}
                 {agenticResult.governance && (
                   <div className={`flex items-center justify-between text-xs rounded px-2 py-1.5 border ${
                     agenticResult.governance.decision === "APPROVED" ? "bg-green-500/10 border-green-500/20" : agenticResult.governance.decision === "DENIED" ? "bg-red-500/10 border-red-500/20" : "bg-yellow-500/10 border-yellow-500/20"
@@ -548,9 +654,17 @@ export default function RunPage({ params }: { params: { runId: string } }) {
                 <div className="flex flex-wrap gap-1">
                   {(llmPlan.waypoints || []).map((wp: any, i: number) => {
                     const gov = llmPlan.governance?.[i]; const ok = gov?.decision === "APPROVED";
+                    const isActive = activeWaypointIdx === i;
+                    const isCompleted = activeWaypointIdx > i;
+                    const isNext = activeWaypointIdx >= 0 && activeWaypointIdx + 1 === i;
                     return (
-                      <span key={i} className={`text-[10px] px-1.5 py-0.5 rounded border ${ok ? "border-green-500/30 text-green-400" : "border-yellow-500/30 text-yellow-400"}`}>
-                        {i + 1}: ({wp.x.toFixed(0)},{wp.y.toFixed(0)}) @{wp.max_speed}
+                      <span key={i} className={`text-[10px] px-1.5 py-0.5 rounded border transition-all duration-300 ${
+                        isActive ? "border-cyan-400 bg-cyan-500/25 text-cyan-200 shadow-sm shadow-cyan-500/30 scale-105 font-bold" :
+                        isCompleted ? "border-green-500/40 bg-green-500/15 text-green-400 line-through opacity-70" :
+                        isNext ? "border-purple-400/40 bg-purple-500/10 text-purple-300 animate-pulse" :
+                        ok ? "border-green-500/30 text-green-400" : "border-yellow-500/30 text-yellow-400"
+                      }`}>
+                        {isCompleted ? "✓" : isActive ? "▶" : `${i + 1}:`} ({wp.x.toFixed(0)},{wp.y.toFixed(0)}) @{wp.max_speed}
                       </span>
                     );
                   })}
@@ -589,7 +703,7 @@ export default function RunPage({ params }: { params: { runId: string } }) {
 
             {/* Reset button when done */}
             {(pipelineStage === "done" || pipelineStage === "ready") && (
-              <button onClick={() => { setPipelineStage("idle"); setAgenticResult(null); setLlmPlan(null); setLlmExecResult(null); setMissionError(null); }}
+              <button onClick={() => { setPipelineStage("idle"); setAgenticResult(null); setLlmPlan(null); setLlmExecResult(null); setMissionError(null); setReplanCount(0); setLastDenialPolicy(null); setActiveWaypointIdx(-1); }}
                 className="w-full text-xs text-slate-500 hover:text-slate-300 py-1 transition">
                 ↺ New Mission
               </button>
