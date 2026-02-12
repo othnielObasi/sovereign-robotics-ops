@@ -66,7 +66,7 @@ export function Map2D({
   const W = 600,
     H = 380;
 
-  const geo = world?.geofence ?? { min_x: 0, max_x: 30, min_y: 0, max_y: 20 };
+  const geo = world?.geofence ?? { min_x: 0, max_x: 40, min_y: 0, max_y: 25 };
   const zones: any[] = world?.zones ?? [];
   const obstacles: any[] = world?.obstacles ?? [];
   const human = world?.human ?? null;

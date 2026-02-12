@@ -53,6 +53,7 @@ OBSTACLES: List[Dict[str, Any]] = list(WORLD.get("obstacles", []))
 HUMAN_DEFAULT = WORLD.get("human", {"x": 14, "y": 7})
 ZONES = WORLD.get("zones", [])
 GEOFENCE = WORLD.get("geofence", {"min_x": 0, "max_x": 40, "min_y": 0, "max_y": 25})
+BAYS = WORLD.get("bays", [])
 
 
 class Command(BaseModel):
@@ -261,6 +262,7 @@ def telemetry(request: Request):
         "idle_robots": idle_robots,
         "obstacles": _all_obstacles(),
         "bounds": GEOFENCE,
+        "target": state.get("target"),
         "timestamp": time.time(),
     }
 
@@ -275,6 +277,7 @@ def world(request: Request):
         "human": human_pos,
         "walking_humans": [wh.to_dict() for wh in walking_humans],
         "idle_robots": idle_robots,
+        "bays": BAYS,
     }
 
 

@@ -44,6 +44,9 @@ class SimWorld(BaseModel):
     zones: List[Zone] = []
     obstacles: List[Dict[str, Any]] = []  # kept flexible for MVP
     human: Optional[Human] = None
+    walking_humans: List[Dict[str, Any]] = []
+    idle_robots: List[Dict[str, Any]] = []
+    bays: List[Dict[str, Any]] = []
 
 
 class PathPreview(BaseModel):
