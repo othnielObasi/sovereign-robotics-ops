@@ -8,9 +8,22 @@ import type { WsMessage } from "@/lib/types";
 
 function Card({ title, children, className = "" }: { title: string; children: React.ReactNode; className?: string }) {
   return (
-    <div className={`bg-slate-800 border border-slate-700 rounded-xl p-5 ${className}`}>
+    <div className={`bg-slate-800/80 border border-slate-700/60 rounded-xl p-4 shadow-lg shadow-black/20 ${className}`}>
       <div className="font-bold text-sm text-slate-300 uppercase tracking-wide mb-3">{title}</div>
       {children}
+    </div>
+  );
+}
+
+function CollapsibleCard({ title, children, className = "", defaultOpen = false }: { title: string; children: React.ReactNode; className?: string; defaultOpen?: boolean }) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div className={`bg-slate-800/80 border border-slate-700/60 rounded-xl shadow-lg shadow-black/20 ${className}`}>
+      <button onClick={() => setOpen(!open)} className="w-full flex items-center justify-between p-4 text-left">
+        <span className="font-bold text-sm text-slate-300 uppercase tracking-wide">{title}</span>
+        <span className={`text-slate-500 transition-transform ${open ? "rotate-180" : ""}`}>▾</span>
+      </button>
+      {open && <div className="px-4 pb-4">{children}</div>}
     </div>
   );
 }
@@ -64,13 +77,17 @@ export default function RunPage({ params }: { params: { runId: string } }) {
   // Fix 2: explicit policy_state from WS
   const [livePolicyState, setLivePolicyState] = useState<string>("SAFE");
 
-  // Fix 3: LLM plan
-  const [llmInstruction, setLlmInstruction] = useState("");
+  // ── Unified AI Mission Planner state ──
+  const [missionInstruction, setMissionInstruction] = useState("");
+  const [pipelineStage, setPipelineStage] = useState<"idle" | "reasoning" | "planning" | "governing" | "ready" | "executing" | "done">("idle");
+  const [missionError, setMissionError] = useState<string | null>(null);
+  // Agentic reasoning results
+  const [agenticResult, setAgenticResult] = useState<any>(null);
+  // LLM plan results
   const [llmPlan, setLlmPlan] = useState<any>(null);
-  const [llmLoading, setLlmLoading] = useState(false);
-  const [llmError, setLlmError] = useState<string | null>(null);
   const [llmExecResult, setLlmExecResult] = useState<any>(null);
-  const [llmExecuting, setLlmExecuting] = useState(false);
+  // Live agentic reasoning from WebSocket
+  const [liveThoughtChain, setLiveThoughtChain] = useState<any[]>([]);
 
   // AI Vision / Multimodal
   const [sceneResult, setSceneResult] = useState<any>(null);
@@ -87,13 +104,8 @@ export default function RunPage({ params }: { params: { runId: string } }) {
   const [failureLoading, setFailureLoading] = useState(false);
   const [failureError, setFailureError] = useState<string | null>(null);
 
-  // Agentic Planner
-  const [agenticInstruction, setAgenticInstruction] = useState("");
-  const [agenticResult, setAgenticResult] = useState<any>(null);
-  const [agenticLoading, setAgenticLoading] = useState(false);
-  const [agenticError, setAgenticError] = useState<string | null>(null);
-  // Live agentic reasoning from WebSocket
-  const [liveThoughtChain, setLiveThoughtChain] = useState<any[]>([]);
+  // AI Intelligence Console tab
+  const [aiTab, setAiTab] = useState<"scene" | "telemetry" | "failure">("scene");
 
   async function refreshEvents() {
     try {
@@ -196,38 +208,53 @@ export default function RunPage({ params }: { params: { runId: string } }) {
     }
   }
 
-  async function onGeneratePlan() {
-    if (!llmInstruction.trim()) return;
-    setLlmLoading(true);
-    setLlmError(null);
+  // ── Unified Pipeline: Reason → Plan → Govern → Execute ──
+  async function onRunPipeline() {
+    if (!missionInstruction.trim()) return;
+    setMissionError(null);
+    setAgenticResult(null);
     setLlmPlan(null);
     setLlmExecResult(null);
+
+    // Stage 1: Agentic Reasoning
+    setPipelineStage("reasoning");
     try {
-      const plan = await generateLLMPlan(llmInstruction);
-      setLlmPlan(plan);
+      const aResult = await agenticPropose(missionInstruction);
+      setAgenticResult(aResult);
     } catch (e: any) {
-      setLlmError(e.message || "Plan generation failed");
-    } finally {
-      setLlmLoading(false);
+      setMissionError(e.message || "Reasoning failed");
+      setPipelineStage("idle");
+      return;
+    }
+
+    // Stage 2: Generate multi-waypoint plan
+    setPipelineStage("planning");
+    try {
+      const plan = await generateLLMPlan(missionInstruction);
+      setLlmPlan(plan);
+      setPipelineStage(plan ? "ready" : "idle");
+    } catch (e: any) {
+      setMissionError(e.message || "Plan generation failed");
+      setPipelineStage("idle");
     }
   }
 
-  async function onExecutePlan() {
+  async function onExecutePipeline() {
     if (!llmPlan?.waypoints?.length) return;
-    setLlmExecuting(true);
-    setLlmError(null);
+    setPipelineStage("executing");
+    setMissionError(null);
     setLlmExecResult(null);
     try {
       const result = await executeLLMPlan(
-        llmInstruction,
+        missionInstruction,
         llmPlan.waypoints,
         llmPlan.rationale || ""
       );
       setLlmExecResult(result);
+      setPipelineStage("done");
     } catch (e: any) {
-      setLlmError(e.message || "Execution failed");
-    } finally {
-      setLlmExecuting(false);
+      setMissionError(e.message || "Execution failed");
+      setPipelineStage("ready");
     }
   }
 
@@ -302,21 +329,6 @@ export default function RunPage({ params }: { params: { runId: string } }) {
     }
   }
 
-  async function onAgenticPropose() {
-    if (!agenticInstruction.trim()) return;
-    setAgenticLoading(true);
-    setAgenticError(null);
-    setAgenticResult(null);
-    try {
-      const result = await agenticPropose(agenticInstruction);
-      setAgenticResult(result);
-    } catch (e: any) {
-      setAgenticError(e.message || "Agentic proposal failed");
-    } finally {
-      setAgenticLoading(false);
-    }
-  }
-
   const lastDecision = useMemo(() => {
     const dec = [...events].reverse().find((e) => e.type === "DECISION");
     return dec?.payload || null;
@@ -341,717 +353,456 @@ export default function RunPage({ params }: { params: { runId: string } }) {
 
   const currentStatus = status || run?.status || "—";
 
+  const safetyBannerCls: Record<string, string> = {
+    OK: "bg-green-500/15 border-green-500/30 text-green-400",
+    STOP: "bg-red-500/20 border-red-500/40 text-red-400",
+    SLOW: "bg-yellow-500/15 border-yellow-500/30 text-yellow-400",
+    REPLAN: "bg-blue-500/15 border-blue-500/30 text-blue-400",
+  };
+  const safetyIcon: Record<string, string> = { OK: "✅", STOP: "🔴", SLOW: "🟡", REPLAN: "🔵" };
+
   return (
-    <div className="max-w-7xl mx-auto px-4 py-6">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-2xl font-bold text-white">
-            Run: <span className="text-cyan-400 font-mono">{runId}</span>
+    <div className="max-w-[1400px] mx-auto px-4 py-4 space-y-3">
+      {/* ── Compact Header ── */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <h1 className="text-lg font-bold text-white">
+            <span className="text-cyan-400 font-mono">{runId.slice(0, 12)}</span>
           </h1>
-          {run?.mission_id && (
-            <p className="text-sm text-slate-400 mt-1">Mission: {run.mission_id}</p>
-          )}
-        </div>
-        <div className="flex items-center gap-4">
-          <div className={`flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full border ${
-            wsConnected
-              ? "bg-green-500/20 text-green-400 border-green-500/30"
-              : "bg-red-500/20 text-red-400 border-red-500/30"
+          <StatusBadge status={currentStatus} />
+          <div className={`flex items-center gap-1.5 text-xs font-medium px-2 py-0.5 rounded-full border ${
+            wsConnected ? "bg-green-500/20 text-green-400 border-green-500/30" : "bg-red-500/20 text-red-400 border-red-500/30"
           }`}>
             <div className={`w-1.5 h-1.5 rounded-full ${wsConnected ? "bg-green-400" : "bg-red-400 animate-pulse"}`} />
-            {wsConnected ? "Live" : "Reconnecting..."}
+            {wsConnected ? "Live" : "Offline"}
           </div>
-          <StatusBadge status={currentStatus} />
-          <SafetyBadge state={safety.state} detail={safety.detail} />
+        </div>
+        <div className="flex items-center gap-2">
+          {run?.mission_id && <span className="text-xs text-slate-500 font-mono">{run.mission_id}</span>}
           {currentStatus !== "stopped" && (
-            <button
-              onClick={onStop}
-              className="bg-red-500 hover:bg-red-600 text-white text-sm font-semibold px-4 py-2 rounded-lg transition"
-            >
-              Stop Run
+            <button onClick={onStop} className="bg-red-500/80 hover:bg-red-600 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition">
+              Stop
             </button>
           )}
         </div>
       </div>
 
-      {/* Top Row: Map + Telemetry */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
-        <Card title="2D Map (Simulation)">
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-4">
-              <label className="text-xs text-slate-400 flex items-center gap-1.5 cursor-pointer">
-                <input type="checkbox" checked={showHeatmap} onChange={(e) => setShowHeatmap(e.target.checked)} className="accent-cyan-500" />
-                Risk heatmap
-              </label>
-              <label className="text-xs text-slate-400 flex items-center gap-1.5 cursor-pointer">
-                <input type="checkbox" checked={showTrail} onChange={(e) => setShowTrail(e.target.checked)} className="accent-cyan-500" />
-                Trail
-              </label>
-            </div>
-          </div>
-          <Map2D world={world} telemetry={telemetry} pathPoints={pathPoints} planWaypoints={llmPlan?.waypoints || null} showHeatmap={showHeatmap} showTrail={showTrail} safetyState={safety.state} />
-          <p className="text-[10px] text-slate-500 mt-2">
-            Scroll to zoom &bull; Drag to pan &bull; Cyan: robot &bull; Red: obstacles &bull; Orange: human &bull; Purple: LLM plan &bull; Green: target
-          </p>
-        </Card>
-
-        <Card title="Live Telemetry">
-          {!telemetry ? (
-            <div className="text-slate-500 py-8 text-center">
-              <div className="text-3xl mb-2">📡</div>
-              Waiting for telemetry&hellip;
-            </div>
-          ) : (
-            <pre className="text-xs text-green-400 bg-slate-900/60 p-4 rounded-lg overflow-x-auto max-h-80 overflow-y-auto font-mono">
-{JSON.stringify(telemetry, null, 2)}
-            </pre>
-          )}
-        </Card>
+      {/* ── Safety Banner (full-width, thin, color-coded) ── */}
+      <div className={`flex items-center justify-center gap-2 px-4 py-2 rounded-lg border text-sm font-semibold ${safetyBannerCls[safety.state] || safetyBannerCls.OK}`}>
+        <span>{safetyIcon[safety.state] || "✅"}</span>
+        <span>{safety.state}</span>
+        {safety.state !== "OK" && <span className="font-normal opacity-80">— {safety.detail}</span>}
       </div>
 
-      {/* Middle Row: Scenario Triggers + LLM Panel */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
-        {/* Scenario Triggers (Fix 2) */}
-        <Card title="Scenario Triggers">
-          <p className="text-xs text-slate-500 mb-3">Inject deterministic scenarios to demonstrate governance intervention.</p>
-          {scenarioToast && (
-            <div className="mb-3 px-3 py-2 rounded-lg bg-cyan-500/20 border border-cyan-500/30 text-sm text-cyan-300 animate-pulse">
-              {scenarioToast}
-            </div>
-          )}
-          <div className="grid grid-cols-2 gap-2">
-            <button
-              onClick={() => onScenario("human_approach")}
-              disabled={!!scenarioLoading || currentStatus === "stopped"}
-              className="bg-yellow-500/20 hover:bg-yellow-500/30 border border-yellow-500/30 text-yellow-300 text-sm font-medium px-3 py-2.5 rounded-lg transition disabled:opacity-40"
-            >
-              {scenarioLoading === "human_approach" ? "..." : "🚶 Human Approach"}
-            </button>
-            <button
-              onClick={() => onScenario("human_too_close")}
-              disabled={!!scenarioLoading || currentStatus === "stopped"}
-              className="bg-red-500/20 hover:bg-red-500/30 border border-red-500/30 text-red-300 text-sm font-medium px-3 py-2.5 rounded-lg transition disabled:opacity-40"
-            >
-              {scenarioLoading === "human_too_close" ? "..." : "🛑 Human Too Close"}
-            </button>
-            <button
-              onClick={() => onScenario("path_blocked")}
-              disabled={!!scenarioLoading || currentStatus === "stopped"}
-              className="bg-blue-500/20 hover:bg-blue-500/30 border border-blue-500/30 text-blue-300 text-sm font-medium px-3 py-2.5 rounded-lg transition disabled:opacity-40"
-            >
-              {scenarioLoading === "path_blocked" ? "..." : "🚧 Path Blocked"}
-            </button>
-            <button
-              onClick={() => onScenario("clear")}
-              disabled={!!scenarioLoading || currentStatus === "stopped"}
-              className="bg-green-500/20 hover:bg-green-500/30 border border-green-500/30 text-green-300 text-sm font-medium px-3 py-2.5 rounded-lg transition disabled:opacity-40"
-            >
-              {scenarioLoading === "clear" ? "..." : "✅ Clear Scenario"}
-            </button>
-          </div>
-        </Card>
+      {/* ── MAIN LAYOUT: Hero Map (left 60%) + Sidebar (right 40%) ── */}
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-3">
 
-        {/* LLM Plan Panel (Fix 3) */}
-        <Card title="Gemini LLM Planner">
-          <div className="space-y-3">
-            <div>
-              <label className="text-xs text-slate-400 block mb-1">Instruction for the robot</label>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={llmInstruction}
-                  onChange={(e) => setLlmInstruction(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && onGeneratePlan()}
-                  placeholder="Navigate to loading bay avoiding obstacles"
-                  className="flex-1 bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-purple-500"
-                />
-                <button
-                  onClick={onGeneratePlan}
-                  disabled={llmLoading || !llmInstruction.trim()}
-                  className="bg-purple-500 hover:bg-purple-600 disabled:bg-slate-600 text-white text-sm font-semibold px-4 py-2 rounded-lg transition"
-                >
-                  {llmLoading ? "Planning..." : "Plan"}
-                </button>
+        {/* ── LEFT: Hero Map ── */}
+        <div className="lg:col-span-3 space-y-3">
+          <Card title="Warehouse Simulation">
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-3">
+                <label className="text-[10px] text-slate-400 flex items-center gap-1 cursor-pointer">
+                  <input type="checkbox" checked={showHeatmap} onChange={(e) => setShowHeatmap(e.target.checked)} className="accent-cyan-500 w-3 h-3" />
+                  Heatmap
+                </label>
+                <label className="text-[10px] text-slate-400 flex items-center gap-1 cursor-pointer">
+                  <input type="checkbox" checked={showTrail} onChange={(e) => setShowTrail(e.target.checked)} className="accent-cyan-500 w-3 h-3" />
+                  Trail
+                </label>
+              </div>
+              {/* Scenario triggers inline */}
+              <div className="flex items-center gap-1">
+                {scenarioToast && <span className="text-[10px] text-cyan-300 animate-pulse mr-2">{scenarioToast}</span>}
+                {([
+                  { key: "human_approach", label: "🚶", cls: "border-yellow-500/40 text-yellow-400 hover:bg-yellow-500/20" },
+                  { key: "human_too_close", label: "🛑", cls: "border-red-500/40 text-red-400 hover:bg-red-500/20" },
+                  { key: "path_blocked", label: "🚧", cls: "border-blue-500/40 text-blue-400 hover:bg-blue-500/20" },
+                  { key: "clear", label: "✅", cls: "border-green-500/40 text-green-400 hover:bg-green-500/20" },
+                ] as const).map((s) => (
+                  <button
+                    key={s.key}
+                    onClick={() => onScenario(s.key)}
+                    disabled={!!scenarioLoading || currentStatus === "stopped"}
+                    title={s.key.replace(/_/g, " ")}
+                    className={`border rounded-md px-1.5 py-1 text-xs transition disabled:opacity-30 ${s.cls} ${scenarioLoading === s.key ? "animate-pulse" : ""}`}
+                  >
+                    {s.label}
+                  </button>
+                ))}
               </div>
             </div>
+            <div className="min-h-[350px]">
+              <Map2D world={world} telemetry={telemetry} pathPoints={pathPoints} planWaypoints={llmPlan?.waypoints || null} showHeatmap={showHeatmap} showTrail={showTrail} safetyState={safety.state} />
+            </div>
+            <p className="text-[10px] text-slate-600 mt-1">Scroll to zoom · Drag to pan · Cyan: robot · Red: obstacles · Orange: human · Purple: plan</p>
+          </Card>
 
-            {llmError && (
-              <div className="text-sm text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg p-2">
-                {llmError}
+          {/* ── Unified AI Mission Planner ── */}
+          <Card title="🤖 AI Mission Planner">
+            {/* Pipeline progress bar */}
+            <div className="flex items-center gap-0 mb-3 text-[10px] font-semibold">
+              {([
+                { key: "reasoning", label: "Reasoning", icon: "🧠" },
+                { key: "planning", label: "Plan", icon: "🗺️" },
+                { key: "ready", label: "Governance", icon: "🛡️" },
+                { key: "executing", label: "Execute", icon: "🚀" },
+              ] as const).map((stage, i) => {
+                const stageOrder = ["idle", "reasoning", "planning", "ready", "executing", "done"];
+                const currentIdx = stageOrder.indexOf(pipelineStage);
+                const stageIdx = stageOrder.indexOf(stage.key);
+                const isActive = pipelineStage === stage.key;
+                const isDone = currentIdx > stageIdx;
+                return (
+                  <React.Fragment key={stage.key}>
+                    {i > 0 && <div className={`flex-1 h-0.5 mx-1 rounded ${isDone ? "bg-green-500" : isActive ? "bg-purple-500 animate-pulse" : "bg-slate-700"}`} />}
+                    <div className={`flex items-center gap-1 px-2 py-1 rounded-md border transition-all ${
+                      isActive ? "border-purple-500/50 bg-purple-500/15 text-purple-300" :
+                      isDone ? "border-green-500/30 bg-green-500/10 text-green-400" :
+                      "border-slate-700 text-slate-600"
+                    }`}>
+                      <span>{isDone ? "✓" : stage.icon}</span>
+                      <span>{stage.label}</span>
+                    </div>
+                  </React.Fragment>
+                );
+              })}
+            </div>
+
+            {/* Instruction input */}
+            <div className="flex gap-2 mb-3">
+              <input type="text" value={missionInstruction} onChange={(e) => setMissionInstruction(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && pipelineStage === "idle" && onRunPipeline()}
+                placeholder="Navigate to loading bay avoiding obstacles"
+                className="flex-1 bg-slate-900/60 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-purple-500 placeholder:text-slate-500" />
+              <button onClick={onRunPipeline}
+                disabled={pipelineStage !== "idle" || !missionInstruction.trim()}
+                className="bg-purple-500 hover:bg-purple-600 disabled:bg-slate-600 text-white text-sm font-semibold px-4 py-2 rounded-lg transition whitespace-nowrap">
+                {pipelineStage === "reasoning" ? "🧠 Reasoning..." : pipelineStage === "planning" ? "🗺️ Planning..." : "Plan →"}
+              </button>
+            </div>
+
+            {missionError && <div className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg p-2 mb-2">{missionError}</div>}
+
+            {/* Live reasoning spinner */}
+            {pipelineStage === "reasoning" && liveThoughtChain.length > 0 && (
+              <div className="flex flex-wrap items-center gap-2 mb-2 animate-slide-up">
+                <span className="w-2 h-2 bg-purple-400 rounded-full animate-pulse" />
+                <span className="text-xs text-slate-400">{liveThoughtChain.length} reasoning steps</span>
+                {liveThoughtChain.map((step: any, i: number) => (
+                  <span key={i} className="bg-slate-700 text-cyan-300 px-1.5 py-0.5 rounded font-mono text-[10px]">{step.action || "think"}</span>
+                ))}
               </div>
             )}
 
-            {llmPlan && (
-              <div className="space-y-2">
-                <div className="flex items-center gap-2">
-                  <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
-                    llmPlan.all_approved
-                      ? "bg-green-500/20 text-green-400 border border-green-500/30"
-                      : "bg-yellow-500/20 text-yellow-400 border border-yellow-500/30"
+            {/* Stage 1 result: Agent Reasoning */}
+            {agenticResult && (
+              <div className="space-y-2 mb-3">
+                <div className="text-[10px] uppercase tracking-wide text-slate-500 font-semibold">Reasoning</div>
+                {agenticResult.replanning_used && (
+                  <div className="flex items-center gap-2 text-[10px] bg-amber-500/10 border border-amber-500/20 rounded px-2 py-1">
+                    <span>🔄</span><span className="text-amber-300 font-semibold">Replanned after policy denial</span>
+                  </div>
+                )}
+                <div className="flex flex-wrap items-center gap-2 bg-purple-500/5 border border-purple-500/15 rounded-lg p-2 text-xs">
+                  <span className="text-slate-400">{agenticResult.thought_chain?.length || 0} steps</span>
+                  <span className="text-slate-600">|</span>
+                  {[...new Set((agenticResult.thought_chain || []).map((s: any) => s.action).filter(Boolean))].map((tool: string, i: number) => (
+                    <span key={i} className={`px-1.5 py-0.5 rounded font-mono text-[10px] ${
+                      tool === "submit_action" ? "bg-green-500/20 text-green-300" : tool === "check_policy" ? "bg-cyan-500/20 text-cyan-300" : tool === "graceful_stop" ? "bg-amber-500/20 text-amber-300" : "bg-slate-700 text-slate-300"
+                    }`}>{tool}</span>
+                  ))}
+                  {agenticResult.proposal && (
+                    <>
+                      <span className="text-slate-600">→</span>
+                      <span className="font-semibold text-cyan-400">{agenticResult.proposal.intent}</span>
+                      {agenticResult.proposal.params?.x != null && <span className="text-slate-400">({agenticResult.proposal.params.x}, {agenticResult.proposal.params.y})</span>}
+                    </>
+                  )}
+                </div>
+                {agenticResult.governance && (
+                  <div className={`flex items-center justify-between text-xs rounded px-2 py-1.5 border ${
+                    agenticResult.governance.decision === "APPROVED" ? "bg-green-500/10 border-green-500/20" : agenticResult.governance.decision === "DENIED" ? "bg-red-500/10 border-red-500/20" : "bg-yellow-500/10 border-yellow-500/20"
                   }`}>
-                    {llmPlan.all_approved ? "All Waypoints Approved" : "Some Waypoints Flagged"}
-                  </span>
-                  <span className="text-xs text-slate-500">
-                    {llmPlan.waypoints?.length || 0} waypoints • ~{(llmPlan.estimated_time_s || 0).toFixed(0)}s
-                  </span>
-                </div>
+                    <span className="font-semibold">
+                      {agenticResult.governance.decision === "APPROVED" ? "✅" : agenticResult.governance.decision === "DENIED" ? "❌" : "⚠️"} {agenticResult.governance.decision}
+                    </span>
+                    <span className="text-slate-400">Risk: {(agenticResult.governance.risk_score * 100).toFixed(0)}%</span>
+                  </div>
+                )}
+                {agenticResult.model_used && <div className="text-[10px] text-slate-600 font-mono">Model: {agenticResult.model_used}</div>}
+              </div>
+            )}
 
-                <div className="bg-slate-900/60 rounded-lg p-3">
-                  <div className="text-xs text-slate-400 mb-1">Rationale</div>
-                  <div className="text-sm text-purple-300">{llmPlan.rationale}</div>
+            {/* Stage 2 result: Waypoint Plan */}
+            {llmPlan && (
+              <div className="space-y-2 mb-3">
+                <div className="text-[10px] uppercase tracking-wide text-slate-500 font-semibold">Waypoint Plan</div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${llmPlan.all_approved ? "bg-green-500/20 text-green-400 border-green-500/30" : "bg-yellow-500/20 text-yellow-400 border-yellow-500/30"}`}>
+                    {llmPlan.all_approved ? "All Approved" : "Flagged"}
+                  </span>
+                  <span className="text-[10px] text-slate-500">{llmPlan.waypoints?.length || 0} waypoints</span>
+                  <span className="text-[10px] text-purple-400">{llmPlan.rationale}</span>
                 </div>
-
-                <div className="space-y-1.5">
+                <div className="flex flex-wrap gap-1">
                   {(llmPlan.waypoints || []).map((wp: any, i: number) => {
-                    const gov = llmPlan.governance?.[i];
-                    const ok = gov?.decision === "APPROVED";
+                    const gov = llmPlan.governance?.[i]; const ok = gov?.decision === "APPROVED";
                     return (
-                      <div key={i} className={`flex items-center gap-2 text-xs p-2 rounded-lg ${
-                        ok ? "bg-green-500/10 border border-green-500/20" : "bg-yellow-500/10 border border-yellow-500/20"
-                      }`}>
-                        <span className="font-bold text-purple-400 w-5 text-center">{i + 1}</span>
-                        <span className="text-slate-300">({wp.x.toFixed(1)}, {wp.y.toFixed(1)})</span>
-                        <span className="text-slate-500">@{wp.max_speed.toFixed(1)} m/s</span>
-                        <span className={`ml-auto font-semibold ${ok ? "text-green-400" : "text-yellow-400"}`}>
-                          {gov?.decision || "—"}
-                        </span>
-                        {gov?.policy_hits?.length > 0 && (
-                          <span className="text-slate-500 font-mono">{gov.policy_hits.join(", ")}</span>
-                        )}
-                      </div>
+                      <span key={i} className={`text-[10px] px-1.5 py-0.5 rounded border ${ok ? "border-green-500/30 text-green-400" : "border-yellow-500/30 text-yellow-400"}`}>
+                        {i + 1}: ({wp.x.toFixed(0)},{wp.y.toFixed(0)}) @{wp.max_speed}
+                      </span>
                     );
                   })}
                 </div>
-
-                {/* Execute Plan Button */}
-                <button
-                  onClick={onExecutePlan}
-                  disabled={llmExecuting || currentStatus === "stopped"}
-                  className="w-full bg-green-500 hover:bg-green-600 disabled:bg-slate-600 text-white text-sm font-semibold py-2.5 rounded-lg transition mt-2"
-                >
-                  {llmExecuting ? "Executing..." : "Execute Plan in Simulation"}
-                </button>
-
-                {/* Execution Results */}
-                {llmExecResult && (
-                  <div className="mt-2 space-y-2">
-                    <div className="flex items-center gap-2">
-                      <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
-                        llmExecResult.status === "completed" || llmExecResult.status === "completed_with_warnings"
-                          ? "bg-green-500/20 text-green-400 border border-green-500/30"
-                          : llmExecResult.status === "blocked"
-                          ? "bg-red-500/20 text-red-400 border border-red-500/30"
-                          : "bg-yellow-500/20 text-yellow-400 border border-yellow-500/30"
-                      }`}>
-                        Execution: {llmExecResult.status === "completed_with_warnings" ? "COMPLETED (WARNINGS)" : llmExecResult.status?.toUpperCase()}
-                      </span>
-                    </div>
-
-                    {(llmExecResult.steps || []).map((step: any, i: number) => (
-                      <div key={i} className={`text-xs p-2 rounded-lg ${
-                        step.executed
-                          ? "bg-green-500/10 border border-green-500/20"
-                          : "bg-red-500/10 border border-red-500/20"
-                      }`}>
-                        <div className="flex items-center gap-2">
-                          <span className="font-bold text-purple-400">WP {step.waypoint_index + 1}</span>
-                          <span className={step.executed ? "text-green-400" : "text-red-400"}>
-                            {step.executed ? "Executed" : "Blocked"}
-                          </span>
-                          <span className="text-slate-500">{step.governance_decision}</span>
-                          <span className={`ml-auto font-mono text-[10px] ${
-                            step.policy_state === "SAFE" ? "text-green-400" :
-                            step.policy_state === "SLOW" ? "text-yellow-400" :
-                            step.policy_state === "STOP" ? "text-red-400" : "text-blue-400"
-                          }`}>{step.policy_state}</span>
-                        </div>
-                      </div>
-                    ))}
-
-                    <div className="bg-slate-900/60 rounded-lg p-2 text-xs">
-                      <span className="text-slate-500">Audit Hash: </span>
-                      <span className="text-cyan-400 font-mono">{llmExecResult.audit_hash?.slice(0, 24)}...</span>
-                    </div>
-                  </div>
-                )}
               </div>
             )}
-          </div>
-        </Card>
-      </div>
 
-      {/* Middle Row: Governance Decision */}
-      <div className="mb-4">
-        <Card title="Latest Governance Decision">
-          {!lastDecision ? (
-            <div className="text-slate-500 py-4 text-center">
-              <div className="text-3xl mb-2">⏳</div>
-              No decision yet&hellip;
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 text-sm">
-              <div>
-                <span className="text-slate-500 text-xs">Intent</span>
-                <div className="font-semibold text-white mt-1">{lastDecision.proposal?.intent || "—"}</div>
-              </div>
-              <div>
-                <span className="text-slate-500 text-xs">Decision</span>
-                <div className="mt-1">
-                  <span className={`font-semibold ${
-                    lastDecision.governance?.decision === "APPROVED" ? "text-green-400" :
-                    lastDecision.governance?.decision === "DENIED" ? "text-red-400" : "text-yellow-400"
-                  }`}>
-                    {lastDecision.governance?.decision || "—"}
-                  </span>
-                </div>
-              </div>
-              <div>
-                <span className="text-slate-500 text-xs">Policies Hit</span>
-                <div className="font-mono text-xs text-slate-300 mt-1">
-                  {(lastDecision.governance?.policy_hits || []).join(", ") || "None"}
-                </div>
-              </div>
-              <div>
-                <span className="text-slate-500 text-xs">Risk Score</span>
-                <div className="font-semibold text-white mt-1">
-                  {lastDecision.governance?.risk_score != null
-                    ? (lastDecision.governance.risk_score * 100).toFixed(0) + "%"
-                    : "—"}
-                </div>
-              </div>
-              {lastDecision.governance?.reasons?.length > 0 && (
-                <div className="col-span-full">
-                  <span className="text-slate-500 text-xs">Reasons</span>
-                  <ul className="mt-1 text-sm text-slate-300 list-disc list-inside space-y-0.5">
-                    {lastDecision.governance.reasons.map((r: string, idx: number) => <li key={idx}>{r}</li>)}
-                  </ul>
-                </div>
-              )}
-              {lastDecision.governance?.required_action && (
-                <div className="col-span-full bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-3">
-                  <span className="text-yellow-400 text-xs font-semibold">Required Action</span>
-                  <div className="text-sm text-yellow-300 mt-1">{lastDecision.governance.required_action}</div>
-                </div>
-              )}
-            </div>
-          )}
-        </Card>
-      </div>
+            {/* Execute button */}
+            {pipelineStage === "ready" && llmPlan && (
+              <button onClick={onExecutePipeline} disabled={currentStatus === "stopped"}
+                className="w-full bg-green-500/80 hover:bg-green-600 disabled:bg-slate-600 text-white text-xs font-semibold py-2 rounded-lg transition mb-2">
+                🚀 Execute Plan in Simulation
+              </button>
+            )}
+            {pipelineStage === "executing" && (
+              <div className="text-xs text-purple-300 animate-pulse text-center py-2">Executing waypoints…</div>
+            )}
 
-      {/* AI Vision & Multimodal Analysis (Gemini Robotics ER) */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
-        {/* Scene Analysis (Multimodal) */}
-        <Card title="🔍 AI Scene Analysis" className="lg:col-span-1">
-          <p className="text-xs text-slate-500 mb-3">
-            Gemini Robotics ER multimodal analysis of the current environment state.
-          </p>
-          <button
-            onClick={onAnalyzeScene}
-            disabled={sceneLoading}
-            className="w-full bg-indigo-500 hover:bg-indigo-600 disabled:bg-slate-600 text-white text-sm font-semibold px-4 py-2.5 rounded-lg transition mb-3"
-          >
-            {sceneLoading ? "Analyzing Scene..." : "Analyze Current Scene"}
-          </button>
-          {sceneError && (
-            <div className="text-sm text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg p-2 mb-2">
-              {sceneError}
-            </div>
-          )}
-          {sceneResult && (
-            <div className="space-y-2">
-              {/* Hazards */}
-              {sceneResult.hazards && sceneResult.hazards.length > 0 && (
-                <div>
-                  <div className="text-xs font-semibold text-red-400 mb-1">Detected Hazards</div>
-                  {sceneResult.hazards.map((h: any, i: number) => (
-                    <div key={i} className="flex items-center gap-2 text-xs p-2 rounded-lg bg-red-500/10 border border-red-500/20 mb-1">
-                      <span className={`font-bold ${
-                        (h.severity || "").toLowerCase() === "high" ? "text-red-400" :
-                        (h.severity || "").toLowerCase() === "medium" ? "text-yellow-400" : "text-green-400"
-                      }`}>{(h.severity || "?").toUpperCase()}</span>
-                      <span className="text-slate-300">{h.type || h.description || JSON.stringify(h)}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-              {/* Risk Score */}
-              {sceneResult.risk_score != null && (
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-slate-500">Risk:</span>
-                  <div className="flex-1 h-2 bg-slate-700 rounded-full overflow-hidden">
-                    <div
-                      className={`h-full rounded-full ${
-                        sceneResult.risk_score > 0.7 ? "bg-red-500" :
-                        sceneResult.risk_score > 0.3 ? "bg-yellow-500" : "bg-green-500"
-                      }`}
-                      style={{ width: `${(sceneResult.risk_score * 100).toFixed(0)}%` }}
-                    />
-                  </div>
-                  <span className="text-xs font-mono text-slate-400">{(sceneResult.risk_score * 100).toFixed(0)}%</span>
-                </div>
-              )}
-              {/* Recommended Action */}
-              {sceneResult.recommended_action && (
-                <div className="bg-indigo-500/10 border border-indigo-500/20 rounded-lg p-2">
-                  <div className="text-xs font-semibold text-indigo-400 mb-1">Recommended Action</div>
-                  <div className="text-xs text-slate-300">{sceneResult.recommended_action}</div>
-                </div>
-              )}
-              {/* AI Analysis */}
-              {sceneResult.analysis && (
-                <div className="bg-slate-900/60 rounded-lg p-2 max-h-32 overflow-y-auto">
-                  <div className="text-xs font-semibold text-slate-400 mb-1">AI Reasoning</div>
-                  <div className="text-xs text-slate-300 whitespace-pre-wrap">{sceneResult.analysis}</div>
-                </div>
-              )}
-              {/* Model used */}
-              {sceneResult.model && (
-                <div className="text-[10px] text-slate-600 font-mono">Model: {sceneResult.model}</div>
-              )}
-            </div>
-          )}
-        </Card>
-
-        {/* Telemetry Analysis */}
-        <Card title="📊 Telemetry Analysis" className="lg:col-span-1">
-          <p className="text-xs text-slate-500 mb-3">
-            AI analysis of recent telemetry trends, anomalies, and safety patterns.
-          </p>
-          <button
-            onClick={onAnalyzeTelemetry}
-            disabled={telAnalysisLoading || events.length === 0}
-            className="w-full bg-teal-500 hover:bg-teal-600 disabled:bg-slate-600 text-white text-sm font-semibold px-4 py-2.5 rounded-lg transition mb-3"
-          >
-            {telAnalysisLoading ? "Analyzing..." : "Analyze Telemetry"}
-          </button>
-          {telAnalysisError && (
-            <div className="text-sm text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg p-2 mb-2">
-              {telAnalysisError}
-            </div>
-          )}
-          {telAnalysis && (
-            <div className="space-y-2">
-              {telAnalysis.summary && (
-                <div className="bg-slate-900/60 rounded-lg p-2 max-h-36 overflow-y-auto">
-                  <div className="text-xs font-semibold text-teal-400 mb-1">Summary</div>
-                  <div className="text-xs text-slate-300 whitespace-pre-wrap">{telAnalysis.summary}</div>
-                </div>
-              )}
-              {telAnalysis.anomalies && telAnalysis.anomalies.length > 0 && (
-                <div>
-                  <div className="text-xs font-semibold text-yellow-400 mb-1">Anomalies Detected</div>
-                  {telAnalysis.anomalies.map((a: any, i: number) => (
-                    <div key={i} className="text-xs p-2 rounded-lg bg-yellow-500/10 border border-yellow-500/20 mb-1 text-slate-300">
-                      {a.description || a.type || JSON.stringify(a)}
-                    </div>
-                  ))}
-                </div>
-              )}
-              {telAnalysis.recommendations && (
-                <div className="bg-teal-500/10 border border-teal-500/20 rounded-lg p-2">
-                  <div className="text-xs font-semibold text-teal-400 mb-1">Recommendations</div>
-                  <div className="text-xs text-slate-300 whitespace-pre-wrap">
-                    {Array.isArray(telAnalysis.recommendations)
-                      ? telAnalysis.recommendations.join("\n")
-                      : telAnalysis.recommendations}
-                  </div>
-                </div>
-              )}
-              {telAnalysis.analysis && (
-                <div className="bg-slate-900/60 rounded-lg p-2 max-h-32 overflow-y-auto">
-                  <div className="text-xs text-slate-300 whitespace-pre-wrap">{telAnalysis.analysis}</div>
-                </div>
-              )}
-              {telAnalysis.model && (
-                <div className="text-[10px] text-slate-600 font-mono">Model: {telAnalysis.model}</div>
-              )}
-            </div>
-          )}
-        </Card>
-
-        {/* Failure Detection */}
-        <Card title="⚠️ Failure Detection" className="lg:col-span-1">
-          <p className="text-xs text-slate-500 mb-3">
-            AI-powered pre-emptive failure detection and root-cause analysis.
-          </p>
-          <button
-            onClick={onDetectFailures}
-            disabled={failureLoading || events.length === 0}
-            className="w-full bg-orange-500 hover:bg-orange-600 disabled:bg-slate-600 text-white text-sm font-semibold px-4 py-2.5 rounded-lg transition mb-3"
-          >
-            {failureLoading ? "Detecting..." : "Run Failure Analysis"}
-          </button>
-          {failureError && (
-            <div className="text-sm text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg p-2 mb-2">
-              {failureError}
-            </div>
-          )}
-          {failureResult && (
-            <div className="space-y-2">
-              {/* Failure status */}
-              <div className="flex items-center gap-2">
-                <span className={`text-xs font-semibold px-2 py-0.5 rounded-full border ${
-                  failureResult.failures_detected
-                    ? "bg-red-500/20 text-red-400 border-red-500/30"
-                    : "bg-green-500/20 text-green-400 border-green-500/30"
-                }`}>
-                  {failureResult.failures_detected ? "Failures Detected" : "No Failures"}
+            {/* Stage 3 result: Execution */}
+            {llmExecResult && (
+              <div className="space-y-1 mb-2">
+                <div className="text-[10px] uppercase tracking-wide text-slate-500 font-semibold">Execution Result</div>
+                <span className={`text-xs font-semibold ${llmExecResult.status === "completed" ? "text-green-400" : "text-yellow-400"}`}>
+                  {llmExecResult.status?.toUpperCase()}
                 </span>
-              </div>
-              {/* Failures list */}
-              {failureResult.failures && failureResult.failures.length > 0 && (
-                <div>
-                  {failureResult.failures.map((f: any, i: number) => (
-                    <div key={i} className="text-xs p-2 rounded-lg bg-red-500/10 border border-red-500/20 mb-1">
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className="font-bold text-red-400">{f.type || "FAILURE"}</span>
-                        <span className={`text-[10px] px-1.5 py-0.5 rounded ${
-                          f.severity === "critical" ? "bg-red-700 text-white" :
-                          f.severity === "high" ? "bg-orange-600 text-white" : "bg-yellow-600 text-white"
-                        }`}>{f.severity || "?"}</span>
-                      </div>
-                      <div className="text-slate-300">{f.description || JSON.stringify(f)}</div>
-                      {f.root_cause && <div className="text-slate-500 mt-1">Root cause: {f.root_cause}</div>}
-                    </div>
-                  ))}
-                </div>
-              )}
-              {/* Preventive actions */}
-              {failureResult.preventive_actions && (
-                <div className="bg-orange-500/10 border border-orange-500/20 rounded-lg p-2">
-                  <div className="text-xs font-semibold text-orange-400 mb-1">Preventive Actions</div>
-                  <div className="text-xs text-slate-300 whitespace-pre-wrap">
-                    {Array.isArray(failureResult.preventive_actions)
-                      ? failureResult.preventive_actions.join("\n")
-                      : failureResult.preventive_actions}
+                {(llmExecResult.steps || []).map((step: any, i: number) => (
+                  <div key={i} className={`flex items-center gap-1 px-2 py-1 rounded text-xs ${step.executed ? "bg-green-500/10" : "bg-red-500/10"}`}>
+                    <span className="font-mono text-purple-400">WP{step.waypoint_index + 1}</span>
+                    <span className={step.executed ? "text-green-400" : "text-red-400"}>{step.executed ? "✓" : "✗"}</span>
+                    <span className="text-slate-500">{step.policy_state}</span>
                   </div>
-                </div>
-              )}
-              {failureResult.analysis && (
-                <div className="bg-slate-900/60 rounded-lg p-2 max-h-32 overflow-y-auto">
-                  <div className="text-xs text-slate-300 whitespace-pre-wrap">{failureResult.analysis}</div>
-                </div>
-              )}
-              {failureResult.model && (
-                <div className="text-[10px] text-slate-600 font-mono">Model: {failureResult.model}</div>
-              )}
-            </div>
-          )}
-        </Card>
-      </div>
+                ))}
+                <div className="text-[10px] text-slate-600 font-mono">Hash: {llmExecResult.audit_hash?.slice(0, 20)}…</div>
+              </div>
+            )}
 
-      {/* Agentic Reasoning Panel */}
-      <Card title="🤖 Agentic Planner" className="col-span-full">
-        <p className="text-xs text-slate-500 mb-3">
-          Autonomous planning agent: assesses environment → validates policy → proposes safe action. Replans on denial.
-        </p>
-        <div className="flex gap-2 mb-3">
-          <input
-            type="text"
-            value={agenticInstruction}
-            onChange={(e) => setAgenticInstruction(e.target.value)}
-            placeholder="e.g. Move to loading bay while avoiding humans"
-            className="flex-1 bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-200 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-purple-500/50"
-            onKeyDown={(e) => e.key === "Enter" && onAgenticPropose()}
-          />
-          <button
-            onClick={onAgenticPropose}
-            disabled={agenticLoading || !agenticInstruction.trim()}
-            className="bg-purple-600 hover:bg-purple-700 disabled:bg-slate-600 text-white text-sm font-semibold px-5 py-2 rounded-lg transition whitespace-nowrap"
-          >
-            {agenticLoading ? "Thinking..." : "Run Agent"}
-          </button>
+            {/* Reset button when done */}
+            {(pipelineStage === "done" || pipelineStage === "ready") && (
+              <button onClick={() => { setPipelineStage("idle"); setAgenticResult(null); setLlmPlan(null); setLlmExecResult(null); setMissionError(null); }}
+                className="w-full text-xs text-slate-500 hover:text-slate-300 py-1 transition">
+                ↺ New Mission
+              </button>
+            )}
+          </Card>
         </div>
-        {agenticError && (
-          <div className="text-sm text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg p-2 mb-3">
-            {agenticError}
-          </div>
-        )}
 
-        {/* Live agent status from WebSocket during active runs */}
-        {liveThoughtChain.length > 0 && !agenticResult && (
-          <div className="mb-3">
-            <div className="text-xs font-semibold text-purple-400 mb-2 flex items-center gap-2">
-              <span className="w-2 h-2 bg-purple-400 rounded-full animate-pulse" />
-              Agent Running
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-xs text-slate-400">{liveThoughtChain.length} step{liveThoughtChain.length !== 1 ? "s" : ""}</span>
-              {liveThoughtChain.map((step: any, i: number) => (
-                <span key={i} className="bg-slate-700 text-cyan-300 px-1.5 py-0.5 rounded font-mono text-[10px]">
-                  {step.action || "think"}
-                </span>
-              ))}
-              {liveThoughtChain[liveThoughtChain.length - 1]?.action === "submit_action" && (
-                <span className="text-green-400 text-xs font-semibold">✓ Submitted</span>
-              )}
-            </div>
-          </div>
-        )}
+        {/* ── RIGHT SIDEBAR ── */}
+        <div className="lg:col-span-2 space-y-3">
 
-        {agenticResult && (
-          <div className="space-y-3">
-            {/* Replanning indicator */}
-            {agenticResult.replanning_used && (
-              <div className="flex items-center gap-2 text-xs bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2">
-                <span className="text-amber-400">🔄</span>
-                <span className="text-amber-300 font-semibold">Agent replanned after policy denial</span>
+          {/* Compact Governance Decision */}
+          <Card title="Governance Decision">
+            {!lastDecision ? (
+              <div className="text-slate-500 text-xs text-center py-3">⏳ Awaiting first decision…</div>
+            ) : (
+              <div className="space-y-2 text-xs">
+                <div className="flex items-center justify-between">
+                  <span className={`font-bold text-sm ${
+                    lastDecision.governance?.decision === "APPROVED" ? "text-green-400" : lastDecision.governance?.decision === "DENIED" ? "text-red-400" : "text-yellow-400"
+                  }`}>{lastDecision.governance?.decision || "—"}</span>
+                  <span className="text-slate-400">Risk: {lastDecision.governance?.risk_score != null ? (lastDecision.governance.risk_score * 100).toFixed(0) + "%" : "—"}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-slate-500">Intent:</span>
+                  <span className="text-white font-semibold">{lastDecision.proposal?.intent || "—"}</span>
+                  <span className="text-slate-600">|</span>
+                  <span className="text-slate-500">Policy:</span>
+                  <span className="text-slate-300 font-mono text-[10px]">{(lastDecision.governance?.policy_hits || []).join(", ") || "none"}</span>
+                </div>
+                {lastDecision.governance?.reasons?.length > 0 && (
+                  <div className="text-slate-400 bg-slate-900/40 rounded p-2">
+                    {lastDecision.governance.reasons.map((r: string, i: number) => <div key={i}>• {r}</div>)}
+                  </div>
+                )}
+                {lastDecision.governance?.required_action && (
+                  <div className="bg-yellow-500/10 border border-yellow-500/30 rounded px-2 py-1 text-yellow-300">
+                    {lastDecision.governance.required_action}
+                  </div>
+                )}
               </div>
             )}
+          </Card>
 
-            {/* Agent summary — tools used + step count (no raw chain-of-thought) */}
-            {agenticResult.thought_chain && agenticResult.thought_chain.length > 0 && (
+          {/* Compact Telemetry */}
+          <CollapsibleCard title="Live Telemetry" defaultOpen={false}>
+            {!telemetry ? (
+              <div className="text-slate-500 text-xs text-center py-2">📡 Waiting…</div>
+            ) : (
               <div>
-                <div className="text-xs font-semibold text-purple-400 mb-2">Agent Summary</div>
-                <div className="bg-purple-500/5 border border-purple-500/15 rounded-lg p-3 text-xs">
-                  <div className="flex flex-wrap items-center gap-2 mb-2">
-                    <span className="text-slate-400">{agenticResult.thought_chain.length} reasoning step{agenticResult.thought_chain.length !== 1 ? "s" : ""}</span>
-                    <span className="text-slate-600">|</span>
-                    <span className="text-slate-400">Tools used:</span>
-                    {[...new Set(agenticResult.thought_chain.map((s: any) => s.action).filter(Boolean))].map((tool: string, i: number) => (
-                      <span key={i} className={`px-1.5 py-0.5 rounded font-mono text-[10px] ${
-                        tool === "submit_action" ? "bg-green-500/20 text-green-300" :
-                        tool === "check_policy" ? "bg-cyan-500/20 text-cyan-300" :
-                        tool === "replan" || tool === "graceful_stop" ? "bg-amber-500/20 text-amber-300" :
-                        "bg-slate-700 text-slate-300"
-                      }`}>
-                        {tool}
-                      </span>
-                    ))}
-                  </div>
-                  {/* Final decision line */}
-                  {agenticResult.thought_chain[agenticResult.thought_chain.length - 1]?.action === "graceful_stop" && (
-                    <div className="text-amber-400 text-xs mt-1">⚠ Agent could not find a safe plan — manual override recommended</div>
-                  )}
+                <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs mb-2">
+                  <div><span className="text-slate-500">x:</span> <span className="text-white font-mono">{(+telemetry.x).toFixed(1)}</span></div>
+                  <div><span className="text-slate-500">y:</span> <span className="text-white font-mono">{(+telemetry.y).toFixed(1)}</span></div>
+                  <div><span className="text-slate-500">heading:</span> <span className="text-white font-mono">{((+telemetry.theta || 0) * 180 / Math.PI).toFixed(0)}°</span></div>
+                  <div><span className="text-slate-500">speed:</span> <span className="text-white font-mono">{(+telemetry.speed).toFixed(2)} m/s</span></div>
+                  <div><span className="text-slate-500">human:</span> <span className="text-white font-mono">{(+telemetry.human_distance_m).toFixed(1)}m</span></div>
+                  <div><span className="text-slate-500">obstacle:</span> <span className="text-white font-mono">{(+telemetry.nearest_obstacle_m).toFixed(1)}m</span></div>
                 </div>
-              </div>
-            )}
-
-            {/* Proposal result */}
-            {agenticResult.proposal && (
-              <div className="bg-slate-900/60 border border-slate-700/50 rounded-lg p-3">
-                <div className="text-xs font-semibold text-cyan-400 mb-2">Final Proposal</div>
-                <div className="grid grid-cols-2 gap-2 text-xs">
-                  <div>
-                    <span className="text-slate-500">Intent:</span>
-                    <span className="text-slate-200 ml-1 font-semibold">{agenticResult.proposal.intent}</span>
-                  </div>
-                  <div>
-                    <span className="text-slate-500">Speed:</span>
-                    <span className="text-slate-200 ml-1">{agenticResult.proposal.params?.max_speed ?? "—"}</span>
-                  </div>
-                  <div>
-                    <span className="text-slate-500">Target:</span>
-                    <span className="text-slate-200 ml-1">
-                      ({agenticResult.proposal.params?.x ?? "—"}, {agenticResult.proposal.params?.y ?? "—"})
-                    </span>
-                  </div>
-                </div>
-                {agenticResult.proposal.rationale && (
-                  <div className="text-xs text-slate-400 mt-2 bg-slate-800/60 rounded p-2">
-                    {agenticResult.proposal.rationale}
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Governance result */}
-            {agenticResult.governance && (
-              <div className={`border rounded-lg p-3 text-xs ${
-                agenticResult.governance.decision === "APPROVED"
-                  ? "bg-green-500/10 border-green-500/20"
-                  : agenticResult.governance.decision === "DENIED"
-                  ? "bg-red-500/10 border-red-500/20"
-                  : "bg-yellow-500/10 border-yellow-500/20"
-              }`}>
-                <div className="flex items-center gap-2 mb-1">
-                  <span className="font-semibold">
-                    {agenticResult.governance.decision === "APPROVED" ? "✅" : agenticResult.governance.decision === "DENIED" ? "❌" : "⚠️"}
-                    {" "}{agenticResult.governance.decision}
-                  </span>
-                  <span className="text-slate-400 ml-auto">
-                    Risk: {(agenticResult.governance.risk_score * 100).toFixed(0)}%
-                  </span>
-                </div>
-                {agenticResult.governance.reasons && agenticResult.governance.reasons.length > 0 && (
-                  <ul className="text-slate-400 space-y-0.5 mt-1">
-                    {agenticResult.governance.reasons.map((r: string, i: number) => (
-                      <li key={i}>• {r}</li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-            )}
-
-            {/* Memory summary */}
-            {agenticResult.memory_summary && (
-              <div className="bg-slate-900/40 border border-slate-700/30 rounded-lg p-2">
-                <div className="text-[10px] font-semibold text-slate-500 mb-1">Agent Memory</div>
-                <div className="flex flex-wrap gap-3 text-[10px] text-slate-400">
-                  <span>Total: {agenticResult.memory_summary.total_entries}</span>
-                  <span>Approved: {agenticResult.memory_summary.approved}</span>
-                  <span>Denied: {agenticResult.memory_summary.denied}</span>
-                  <span>Denials in a row: {agenticResult.memory_summary.denial_count}</span>
-                </div>
-              </div>
-            )}
-
-            {agenticResult.model_used && (
-              <div className="text-[10px] text-slate-600 font-mono">Model: {agenticResult.model_used}</div>
-            )}
-          </div>
-        )}
-      </Card>
-
-      {/* Bottom Row: Alerts + Events */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <Card title="Alerts">
-          {alerts.length === 0 ? (
-            <div className="text-slate-500 py-4 text-center">
-              <div className="text-3xl mb-2">✅</div>
-              No alerts yet.
-            </div>
-          ) : (
-            <ul className="space-y-2 max-h-64 overflow-y-auto">
-              {alerts.map((a, i) => (
-                <li key={i} className="flex items-start gap-2 text-sm bg-red-500/10 border border-red-500/20 rounded-lg p-3">
-                  <span className="text-red-400">⚠️</span>
-                  <span className="text-slate-300">{a.event || JSON.stringify(a)}</span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </Card>
-
-        <Card title="Chain-of-Trust Timeline">
-          {events.length === 0 ? (
-            <div className="text-slate-500 py-4 text-center">
-              <div className="text-3xl mb-2">🔗</div>
-              No events yet.
-            </div>
-          ) : (
-            <div className="max-h-80 overflow-y-auto space-y-1">
-              {events.map((e) => (
-                <details key={e.id} className="group border-b border-slate-700/50 pb-2">
-                  <summary className="cursor-pointer py-2 flex items-center gap-2 text-sm hover:bg-slate-700/30 rounded px-2 -mx-2">
-                    <span className={`w-2 h-2 rounded-full flex-shrink-0 ${
-                      e.type === "DECISION" ? "bg-cyan-400" :
-                      e.type === "TELEMETRY" ? "bg-green-400" : "bg-yellow-400"
-                    }`} />
-                    <span className="text-slate-400 text-xs font-mono">{new Date(e.ts).toLocaleTimeString()}</span>
-                    <span className="font-semibold text-xs text-slate-300">{e.type}</span>
-                    <span className="text-slate-600 text-xs font-mono ml-auto">{e.hash?.slice(0, 12)}…</span>
-                  </summary>
-                  <pre className="text-xs text-slate-400 bg-slate-900/60 p-3 rounded-lg overflow-x-auto mt-1 font-mono">
-{JSON.stringify(e.payload, null, 2)}
+                <details>
+                  <summary className="text-[10px] text-slate-500 cursor-pointer hover:text-slate-400">Show Raw JSON</summary>
+                  <pre className="text-[10px] text-green-400/70 bg-slate-900/60 p-2 rounded mt-1 overflow-x-auto max-h-40 overflow-y-auto font-mono">
+{JSON.stringify(telemetry, null, 2)}
                   </pre>
                 </details>
-              ))}
-            </div>
-          )}
-        </Card>
+              </div>
+            )}
+          </CollapsibleCard>
+
+          {/* Chain-of-Trust Timeline (compact, icons) */}
+          <Card title="Chain-of-Trust">
+            {events.length === 0 ? (
+              <div className="text-slate-500 text-xs text-center py-2">🔗 No events yet.</div>
+            ) : (
+              <div className="max-h-60 overflow-y-auto space-y-0.5">
+                {events.slice(-10).reverse().map((e) => {
+                  const icon = e.type === "DECISION" ? "🔵" : e.type === "TELEMETRY" ? "🟢" : "🟠";
+                  return (
+                    <details key={e.id} className="group">
+                      <summary className="cursor-pointer py-1.5 flex items-center gap-1.5 text-xs hover:bg-slate-700/30 rounded px-1 -mx-1">
+                        <span className="text-[10px]">{icon}</span>
+                        <span className="text-slate-500 font-mono text-[10px]">{new Date(e.ts).toLocaleTimeString()}</span>
+                        <span className="font-semibold text-[10px] text-slate-300">{e.type}</span>
+                        <span className="text-slate-700 text-[10px] font-mono ml-auto">{e.hash?.slice(0, 8)}…</span>
+                      </summary>
+                      <pre className="text-[10px] text-slate-400 bg-slate-900/60 p-2 rounded overflow-x-auto mt-0.5 font-mono max-h-24 overflow-y-auto">
+{JSON.stringify(e.payload, null, 2)}
+                      </pre>
+                    </details>
+                  );
+                })}
+              </div>
+            )}
+          </Card>
+
+          {/* Alerts */}
+          <Card title="Alerts">
+            {alerts.length === 0 ? (
+              <div className="text-xs text-slate-500 space-y-1">
+                <div className="flex items-center gap-2 bg-green-500/5 border border-green-500/10 rounded px-2 py-1">
+                  <span className="text-green-400 text-[10px]">●</span>
+                  <span className="text-slate-400">System nominal — no active alerts</span>
+                </div>
+              </div>
+            ) : (
+              <ul className="space-y-1 max-h-40 overflow-y-auto">
+                {alerts.map((a, i) => (
+                  <li key={i} className="flex items-start gap-1.5 text-xs bg-red-500/10 border border-red-500/20 rounded px-2 py-1.5">
+                    <span className="text-red-400">⚠️</span>
+                    <span className="text-slate-300">{a.event || JSON.stringify(a)}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Card>
+        </div>
       </div>
+
+      {/* ── AI Intelligence Console (tabbed, below main layout) ── */}
+      <CollapsibleCard title="AI Intelligence Console" defaultOpen={false}>
+        <div className="flex gap-1 mb-3">
+          {(["scene", "telemetry", "failure"] as const).map((tab) => (
+            <button key={tab} onClick={() => setAiTab(tab)}
+              className={`text-xs font-medium px-3 py-1.5 rounded-lg transition ${aiTab === tab ? "bg-purple-500/20 text-purple-300 border border-purple-500/30" : "text-slate-400 hover:text-slate-300 hover:bg-slate-700/50"}`}>
+              {tab === "scene" ? "🔍 Scene" : tab === "telemetry" ? "📊 Telemetry" : "⚠️ Failures"}
+            </button>
+          ))}
+        </div>
+
+        {aiTab === "scene" && (
+          <div>
+            <button onClick={onAnalyzeScene} disabled={sceneLoading}
+              className="w-full bg-indigo-500/80 hover:bg-indigo-600 disabled:bg-slate-600 text-white text-xs font-semibold px-4 py-2 rounded-lg transition mb-2">
+              {sceneLoading ? "Analyzing..." : "Analyze Current Scene"}
+            </button>
+            {sceneError && <div className="text-xs text-red-400 bg-red-500/10 rounded p-2 mb-2">{sceneError}</div>}
+            {sceneResult && (
+              <div className="space-y-2 text-xs">
+                {sceneResult.hazards?.length > 0 && sceneResult.hazards.map((h: any, i: number) => (
+                  <div key={i} className="flex items-center gap-2 bg-red-500/10 border border-red-500/20 rounded p-2">
+                    <span className={`font-bold ${h.severity === "high" ? "text-red-400" : "text-yellow-400"}`}>{(h.severity || "?").toUpperCase()}</span>
+                    <span className="text-slate-300">{h.type || h.description}</span>
+                  </div>
+                ))}
+                {sceneResult.risk_score != null && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-slate-500">Risk:</span>
+                    <div className="flex-1 h-1.5 bg-slate-700 rounded-full overflow-hidden">
+                      <div className={`h-full rounded-full ${sceneResult.risk_score > 0.7 ? "bg-red-500" : sceneResult.risk_score > 0.3 ? "bg-yellow-500" : "bg-green-500"}`}
+                        style={{ width: `${(sceneResult.risk_score * 100)}%` }} />
+                    </div>
+                    <span className="font-mono text-slate-400">{(sceneResult.risk_score * 100).toFixed(0)}%</span>
+                  </div>
+                )}
+                {sceneResult.recommended_action && <div className="bg-indigo-500/10 border border-indigo-500/20 rounded p-2 text-slate-300">{sceneResult.recommended_action}</div>}
+                {sceneResult.analysis && <div className="bg-slate-900/60 rounded p-2 max-h-28 overflow-y-auto text-slate-300 whitespace-pre-wrap">{sceneResult.analysis}</div>}
+                {sceneResult.model && <div className="text-[10px] text-slate-600 font-mono">Model: {sceneResult.model}</div>}
+              </div>
+            )}
+          </div>
+        )}
+
+        {aiTab === "telemetry" && (
+          <div>
+            <button onClick={onAnalyzeTelemetry} disabled={telAnalysisLoading || events.length === 0}
+              className="w-full bg-teal-500/80 hover:bg-teal-600 disabled:bg-slate-600 text-white text-xs font-semibold px-4 py-2 rounded-lg transition mb-2">
+              {telAnalysisLoading ? "Analyzing..." : "Analyze Telemetry"}
+            </button>
+            {telAnalysisError && <div className="text-xs text-red-400 bg-red-500/10 rounded p-2 mb-2">{telAnalysisError}</div>}
+            {telAnalysis && (
+              <div className="space-y-2 text-xs">
+                {telAnalysis.summary && <div className="bg-slate-900/60 rounded p-2 max-h-28 overflow-y-auto text-slate-300 whitespace-pre-wrap">{telAnalysis.summary}</div>}
+                {telAnalysis.anomalies?.length > 0 && telAnalysis.anomalies.map((a: any, i: number) => (
+                  <div key={i} className="bg-yellow-500/10 border border-yellow-500/20 rounded p-2 text-slate-300">{a.description || a.type}</div>
+                ))}
+                {telAnalysis.recommendations && (
+                  <div className="bg-teal-500/10 border border-teal-500/20 rounded p-2 text-slate-300 whitespace-pre-wrap">
+                    {Array.isArray(telAnalysis.recommendations) ? telAnalysis.recommendations.join("\n") : telAnalysis.recommendations}
+                  </div>
+                )}
+                {telAnalysis.model && <div className="text-[10px] text-slate-600 font-mono">Model: {telAnalysis.model}</div>}
+              </div>
+            )}
+          </div>
+        )}
+
+        {aiTab === "failure" && (
+          <div>
+            <button onClick={onDetectFailures} disabled={failureLoading || events.length === 0}
+              className="w-full bg-orange-500/80 hover:bg-orange-600 disabled:bg-slate-600 text-white text-xs font-semibold px-4 py-2 rounded-lg transition mb-2">
+              {failureLoading ? "Detecting..." : "Run Failure Analysis"}
+            </button>
+            {failureError && <div className="text-xs text-red-400 bg-red-500/10 rounded p-2 mb-2">{failureError}</div>}
+            {failureResult && (
+              <div className="space-y-2 text-xs">
+                <span className={`font-semibold px-2 py-0.5 rounded-full border text-[10px] ${failureResult.failures_detected ? "bg-red-500/20 text-red-400 border-red-500/30" : "bg-green-500/20 text-green-400 border-green-500/30"}`}>
+                  {failureResult.failures_detected ? "Failures Detected" : "No Failures"}
+                </span>
+                {failureResult.failures?.map((f: any, i: number) => (
+                  <div key={i} className="bg-red-500/10 border border-red-500/20 rounded p-2">
+                    <span className="font-bold text-red-400">{f.type}</span> <span className="text-[10px] bg-red-700 text-white px-1 rounded">{f.severity}</span>
+                    <div className="text-slate-300 mt-1">{f.description}</div>
+                  </div>
+                ))}
+                {failureResult.preventive_actions && (
+                  <div className="bg-orange-500/10 border border-orange-500/20 rounded p-2 text-slate-300 whitespace-pre-wrap">
+                    {Array.isArray(failureResult.preventive_actions) ? failureResult.preventive_actions.join("\n") : failureResult.preventive_actions}
+                  </div>
+                )}
+                {failureResult.model && <div className="text-[10px] text-slate-600 font-mono">Model: {failureResult.model}</div>}
+              </div>
+            )}
+          </div>
+        )}
+      </CollapsibleCard>
     </div>
   );
 }
