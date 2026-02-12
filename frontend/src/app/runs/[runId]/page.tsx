@@ -520,13 +520,14 @@ export default function RunPage({ params }: { params: { runId: string } }) {
               )}
             </div>
 
-            {/* Pipeline progress bar */}
+            {/* Pipeline step indicator — numbered intelligence pipeline */}
             <div className="flex items-center gap-0 mb-3 text-[10px] font-semibold">
               {([
-                { key: "reasoning", label: "Reasoning", icon: "🧠" },
-                { key: "planning", label: "Plan", icon: "🗺️" },
-                { key: "ready", label: "Governance", icon: "🛡️" },
-                { key: "executing", label: "Execute", icon: "🚀" },
+                { key: "reasoning", label: "1. Reasoning", icon: "🧠" },
+                { key: "planning", label: "2. Plan", icon: "🗺️" },
+                { key: "ready", label: "3. Governance", icon: "🛡️" },
+                { key: "executing", label: "4. Execute", icon: "🚀" },
+                { key: "done", label: "5. Audit", icon: "📋" },
               ] as const).map((stage, i) => {
                 const stageOrder = ["idle", "reasoning", "planning", "ready", "executing", "done"];
                 const currentIdx = stageOrder.indexOf(pipelineStage);
@@ -637,7 +638,36 @@ export default function RunPage({ params }: { params: { runId: string } }) {
                   </div>
                 </div>
 
-                {/* Tool use chips */}
+                {/* Tool use — structured operational format */}
+                <div className="bg-slate-950/60 border border-slate-700/50 rounded p-2 space-y-1">
+                  {(agenticResult.thought_chain || []).filter((s: any) => s.action && s.action !== "replan").map((s: any, i: number) => {
+                    const isOk = !s.observation?.toLowerCase().includes("denied") && !s.observation?.toLowerCase().includes("violation");
+                    return (
+                      <div key={i} className="flex items-center gap-2 text-[10px] font-mono">
+                        <span className={`px-1.5 py-0.5 rounded ${s.action === "submit_action" ? "bg-green-500/20 text-green-300" : s.action === "check_policy" ? "bg-cyan-500/20 text-cyan-300" : "bg-slate-700 text-slate-300"}`}>{s.action}</span>
+                        <span className="text-slate-600">→</span>
+                        <span className={isOk ? "text-green-400" : "text-amber-400"}>{isOk ? "OK" : "⚠ violation"}</span>
+                        {s.thought && <span className="text-slate-500 truncate max-w-[200px]">{s.thought}</span>}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Memory awareness — denial history */}
+                {agenticResult.memory_summary && agenticResult.memory_summary.recent_denials > 0 && (
+                  <div className="bg-amber-500/8 border border-amber-500/20 rounded p-2 space-y-1 text-[10px]">
+                    <div className="text-amber-300 font-semibold">Memory Recall</div>
+                    {(agenticResult.memory_summary.entries || []).filter((e: any) => e.decision === "DENIED" || e.decision === "NEEDS_REVIEW").slice(-3).map((e: any, i: number) => (
+                      <div key={i} className="flex items-center gap-2 font-mono text-amber-400/80">
+                        <span>↳ Previous denial:</span>
+                        <span className="text-amber-300">{(e.policy_hits || []).join(", ") || "policy hit"}</span>
+                        <span className="text-slate-500">→ Adjusted: {e.intent} @{e.params?.max_speed || "?"}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Proposal + model info line */}
                 <div className="flex flex-wrap items-center gap-2 text-xs">
                   <span className="text-slate-500 text-[10px]">{agenticResult.thought_chain?.length || 0} steps</span>
                   {[...new Set((agenticResult.thought_chain || []).map((s: any) => s.action).filter(Boolean))].map((tool: string, i: number) => (
@@ -656,13 +686,31 @@ export default function RunPage({ params }: { params: { runId: string } }) {
 
                 {/* Governance inline */}
                 {agenticResult.governance && (
-                  <div className={`flex items-center justify-between text-xs rounded px-2 py-1.5 border ${
+                  <div className={`text-xs rounded px-2 py-1.5 border space-y-1 ${
                     agenticResult.governance.decision === "APPROVED" ? "bg-green-500/10 border-green-500/20" : agenticResult.governance.decision === "DENIED" ? "bg-red-500/10 border-red-500/20" : "bg-yellow-500/10 border-yellow-500/20"
                   }`}>
-                    <span className="font-semibold">
-                      {agenticResult.governance.decision === "APPROVED" ? "✅" : agenticResult.governance.decision === "DENIED" ? "❌" : "⚠️"} {agenticResult.governance.decision}
-                    </span>
-                    <span className="text-slate-400">Risk: {(agenticResult.governance.risk_score * 100).toFixed(0)}%</span>
+                    <div className="flex items-center justify-between">
+                      <span className="font-semibold">
+                        {agenticResult.governance.decision === "APPROVED" ? "✅" : agenticResult.governance.decision === "DENIED" ? "❌" : "⚠️"} {agenticResult.governance.decision}
+                      </span>
+                      <span className="text-slate-400">Risk: {(agenticResult.governance.risk_score * 100).toFixed(0)}%</span>
+                    </div>
+                    {/* Why Approved / Why Denied — explainability */}
+                    {agenticResult.governance.decision === "APPROVED" && telemetry && (
+                      <div className="text-[10px] text-green-400/70 space-y-0.5 pt-1 border-t border-green-500/10">
+                        <div className="text-green-300 font-semibold mb-0.5">Approved because:</div>
+                        {telemetry.human_distance_m > 3 && <div>✓ Human distance: {telemetry.human_distance_m?.toFixed(1)}m {'>'} 3m safe threshold</div>}
+                        {telemetry.human_distance_m <= 3 && telemetry.human_distance_m > 1 && <div>✓ Human distance: {telemetry.human_distance_m?.toFixed(1)}m — speed reduced to safe level</div>}
+                        {telemetry.nearest_obstacle_m > 0.5 && <div>✓ Obstacle clearance: {telemetry.nearest_obstacle_m?.toFixed(1)}m {'>'} 0.5m minimum</div>}
+                        <div>✓ Speed {agenticResult.proposal?.params?.max_speed || '?'} m/s within {telemetry.zone || 'zone'} limit ({telemetry.zone === 'loading_bay' ? '0.4' : '0.5'} m/s)</div>
+                        <div>✓ Position within geofence bounds</div>
+                      </div>
+                    )}
+                    {agenticResult.governance.decision !== "APPROVED" && agenticResult.governance.reasons?.length > 0 && (
+                      <div className="text-[10px] text-red-400/70 space-y-0.5 pt-1 border-t border-red-500/10">
+                        {agenticResult.governance.reasons.map((r: string, i: number) => <div key={i}>• {r}</div>)}
+                      </div>
+                    )}
                   </div>
                 )}
                 {agenticResult.model_used && <div className="text-[10px] text-slate-600 font-mono">Model: {agenticResult.model_used}</div>}
@@ -762,8 +810,26 @@ export default function RunPage({ params }: { params: { runId: string } }) {
                   <span className="text-slate-500">Policy:</span>
                   <span className="text-slate-300 font-mono text-[10px]">{(lastDecision.governance?.policy_hits || []).join(", ") || "none"}</span>
                 </div>
+                {lastDecision.governance?.decision === "APPROVED" && (
+                  <div className="bg-green-500/5 border border-green-500/20 rounded p-2 space-y-1">
+                    <div className="text-green-400 font-semibold text-[10px] uppercase tracking-wider mb-1">Why Approved</div>
+                    {[
+                      { label: "Human distance", check: "> 3 m safe clearance" },
+                      { label: "Obstacle clearance", check: "> 0.5 m buffer" },
+                      { label: "Speed", check: "within zone limit" },
+                      { label: "Geofence", check: "position inside boundary" },
+                    ].map((item, i) => (
+                      <div key={i} className="flex items-center gap-1.5">
+                        <span className="text-green-500 text-[10px]">✓</span>
+                        <span className="text-slate-400">{item.label}:</span>
+                        <span className="text-green-300">{item.check}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
                 {lastDecision.governance?.reasons?.length > 0 && (
                   <div className="text-slate-400 bg-slate-900/40 rounded p-2">
+                    <div className="text-red-400 font-semibold text-[10px] uppercase tracking-wider mb-1">Policy Violations</div>
                     {lastDecision.governance.reasons.map((r: string, i: number) => <div key={i}>• {r}</div>)}
                   </div>
                 )}

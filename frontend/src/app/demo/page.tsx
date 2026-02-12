@@ -416,8 +416,8 @@ export default function SovereignDashboard() {
       {/* Demo Status Bar */}
       <div className="flex items-center justify-between mb-3 pb-3 border-b border-slate-700">
         <div className="flex items-center gap-3">
-          <h1 className="text-lg font-bold">Interactive Demo</h1>
-          <p className="text-xs text-slate-400">Simulated Governance Scenarios</p>
+          <h1 className="text-lg font-bold">Governance Scenarios</h1>
+          <p className="text-xs text-cyan-400/80 max-w-md">Real-time AI intervention in autonomous warehouse robotics — watch governance react to humans, obstacles, and policy violations.</p>
         </div>
         
         {/* Connection Status */}
