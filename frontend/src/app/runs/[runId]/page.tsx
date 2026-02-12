@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { getRun, listEvents, stopRun, getWorld, getPathPreview, triggerScenario, generateLLMPlan, executeLLMPlan, analyzeScene, analyzeTelemetry, detectFailures, agenticPropose } from "@/lib/api";
+import { getRun, listEvents, stopRun, getWorld, getPathPreview, triggerScenario, generateLLMPlan, executeLLMPlan, analyzeScene, analyzeTelemetry, detectFailures, agenticPropose, getMission } from "@/lib/api";
 import { Map2D } from "@/components/Map2D";
 import { wsUrlForRun } from "@/lib/ws";
 import type { WsMessage } from "@/lib/types";
@@ -58,6 +58,7 @@ function SafetyBadge({ state, detail }: { state: string; detail: string }) {
 export default function RunPage({ params }: { params: { runId: string } }) {
   const runId = params.runId;
   const [run, setRun] = useState<any>(null);
+  const [mission, setMission] = useState<any>(null);
   const [telemetry, setTelemetry] = useState<any>(null);
   const [world, setWorld] = useState<any>(null);
   const [showHeatmap, setShowHeatmap] = useState<boolean>(true);
@@ -126,7 +127,20 @@ export default function RunPage({ params }: { params: { runId: string } }) {
 
   useEffect(() => {
     (async () => {
-      try { setRun(await getRun(runId)); } catch (_) {}
+      try {
+        const r = await getRun(runId);
+        setRun(r);
+        // Fetch the parent mission to pre-fill instruction & goal
+        if (r?.mission_id) {
+          try {
+            const m = await getMission(r.mission_id);
+            setMission(m);
+            if (m?.title && !missionInstruction) {
+              setMissionInstruction(m.title);
+            }
+          } catch (_) {}
+        }
+      } catch (_) {}
       try { setWorld(await getWorld()); } catch (_) {}
       await refreshEvents();
     })();
@@ -229,8 +243,9 @@ export default function RunPage({ params }: { params: { runId: string } }) {
 
     // Stage 1: Agentic Reasoning
     setPipelineStage("reasoning");
+    const missionGoal = mission?.goal || undefined;
     try {
-      const aResult = await agenticPropose(missionInstruction);
+      const aResult = await agenticPropose(missionInstruction, missionGoal);
       setAgenticResult(aResult);
       // Track replanning
       if (aResult.replanning_used) {
@@ -250,7 +265,7 @@ export default function RunPage({ params }: { params: { runId: string } }) {
     // Stage 2: Generate multi-waypoint plan
     setPipelineStage("planning");
     try {
-      const plan = await generateLLMPlan(missionInstruction);
+      const plan = await generateLLMPlan(missionInstruction, missionGoal);
       setLlmPlan(plan);
       // If plan has governance failures, auto-replan once
       if (plan && !plan.all_approved && autonomousMode) {
@@ -262,7 +277,7 @@ export default function RunPage({ params }: { params: { runId: string } }) {
         // Replan with adjusted instruction
         setPipelineStage("planning");
         try {
-          const replan = await generateLLMPlan(`${missionInstruction} (avoid policy violations, use slower speed)`);
+          const replan = await generateLLMPlan(`${missionInstruction} (avoid policy violations, use slower speed)`, missionGoal);
           if (replan) setLlmPlan(replan);
         } catch (_) {}
       }
@@ -534,11 +549,25 @@ export default function RunPage({ params }: { params: { runId: string } }) {
               })}
             </div>
 
+            {/* Mission context badge */}
+            {mission && (
+              <div className="flex items-center gap-2 mb-2 text-xs text-slate-400">
+                <span className="bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 px-2 py-0.5 rounded-full">
+                  Mission: {mission.title}
+                </span>
+                {mission.goal && (
+                  <span className="bg-slate-700/50 border border-slate-600 text-slate-300 px-2 py-0.5 rounded-full">
+                    Goal: ({mission.goal.x}, {mission.goal.y})
+                  </span>
+                )}
+              </div>
+            )}
+
             {/* Instruction input */}
             <div className="flex gap-2 mb-3">
               <input type="text" value={missionInstruction} onChange={(e) => setMissionInstruction(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && pipelineStage === "idle" && onRunPipeline()}
-                placeholder="Navigate to loading bay avoiding obstacles"
+                placeholder={mission?.title || "Navigate to loading bay avoiding obstacles"}
                 className="flex-1 bg-slate-900/60 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-purple-500 placeholder:text-slate-500" />
               <button onClick={onRunPipeline}
                 disabled={pipelineStage !== "idle" || !missionInstruction.trim()}
