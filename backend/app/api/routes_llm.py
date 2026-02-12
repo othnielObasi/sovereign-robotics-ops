@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from app.config import settings
-from app.services.gemini_planner import GeminiPlanner
+from app.services.gemini_planner import GeminiPlanner, resolve_bay_from_instruction
 from app.services.sim_adapter import SimAdapter
 from app.services.governance_engine import GovernanceEngine
 from app.policies.rules_python import evaluate_policies, GEOFENCE
@@ -165,9 +165,24 @@ async def generate_plan(body: PlanRequest):
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Cannot reach simulator: {e}")
 
-    planner = _get_planner()
+    # Fetch world to get bays for coordinate resolution
     try:
-        plan = await planner.generate_plan(telemetry, body.instruction, body.goal, preferred_model=body.model)
+        world = await _sim.get_world()
+    except Exception:
+        world = {}
+    bays = world.get("bays", [])
+
+    # Auto-resolve bay name from instruction to goal coordinates
+    goal = body.goal
+    if not goal:
+        resolved = resolve_bay_from_instruction(body.instruction, bays)
+        if resolved:
+            goal = resolved
+
+    planner = _get_planner()
+    planner.set_bays(bays)
+    try:
+        plan = await planner.generate_plan(telemetry, body.instruction, goal, preferred_model=body.model)
     except Exception as e:
         logger.exception("Gemini plan generation failed")
         raise HTTPException(status_code=502, detail=f"Gemini plan generation failed: {e}")
@@ -419,7 +434,15 @@ async def agentic_propose(body: AgenticProposeRequest):
     except Exception:
         world = None
 
-    goal = body.goal or {"x": 15.0, "y": 10.0}
+    # Auto-resolve bay name from instruction to goal coordinates
+    bays = (world or {}).get("bays", [])
+    goal = body.goal
+    if not goal:
+        resolved = resolve_bay_from_instruction(body.instruction, bays)
+        if resolved:
+            goal = resolved
+    if not goal:
+        goal = {"x": 15.0, "y": 10.0}
 
     from app.services.agentic_planner import AgenticPlanner
     agent = AgenticPlanner()

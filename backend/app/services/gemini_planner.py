@@ -13,6 +13,35 @@ from app.schemas.governance import ActionProposal
 
 logger = logging.getLogger("app.gemini_planner")
 
+
+def resolve_bay_from_instruction(instruction: str, bays: List[Dict[str, Any]]) -> Optional[Dict[str, float]]:
+    """Extract a bay ID from natural-language instruction and return its coordinates.
+
+    Matches patterns like 'B-03', 'bay B-03', 'dock B-01', 'shelf S-02', 'R-01'.
+    Returns {"x": ..., "y": ...} or None.
+    """
+    if not bays:
+        return None
+    bay_map = {b["id"].upper(): b for b in bays if "id" in b}
+    # Look for bay IDs in the instruction (e.g. B-03, S-01, R-02)
+    matches = re.findall(r'\b([BSR]-\d{1,3})\b', instruction.upper())
+    for m in matches:
+        if m in bay_map:
+            b = bay_map[m]
+            return {"x": float(b["x"]), "y": float(b["y"])}
+    return None
+
+
+def bay_directory_text(bays: List[Dict[str, Any]]) -> str:
+    """Format bay list as a text table for LLM prompts."""
+    if not bays:
+        return ""
+    lines = ["BAY DIRECTORY (use exact coordinates when navigating to a bay):"]
+    for b in bays:
+        label = f"{b['id']} ({b.get('type', 'bay')})"
+        lines.append(f"  {label:20s} → x={b['x']}, y={b['y']}")
+    return "\n".join(lines)
+
 _JSON_RE = re.compile(r"(\{.*\}|\[.*\])", re.DOTALL)
 
 # Model cascade: robotics-er (primary) → flash variants → deterministic fallback
@@ -42,6 +71,11 @@ class GeminiPlanner:
         self.model_cascade = [self.primary_model] + [
             m for m in MODEL_CASCADE if m != self.primary_model
         ]
+        self._bays: List[Dict[str, Any]] = []
+
+    def set_bays(self, bays: List[Dict[str, Any]]) -> None:
+        """Load bay directory for coordinate resolution."""
+        self._bays = bays or []
 
     def _get_cascade(self, preferred_model: Optional[str] = None) -> List[str]:
         """Return model cascade starting from preferred_model, preserving fallback order."""
@@ -138,6 +172,7 @@ Output STRICT JSON: {{"intent":"MOVE_TO|STOP|WAIT","params":{{...}},"rationale":
             return self._deterministic_plan(telemetry, goal)
 
         goal_text = f"GOAL: {json.dumps(goal)}" if goal else "No specific goal."
+        bays_text = bay_directory_text(self._bays) if self._bays else ""
         prompt = f"""You are a robot planner in a 40x25m warehouse.
 
 INSTRUCTION: {instruction}
@@ -145,6 +180,10 @@ INSTRUCTION: {instruction}
 STATE: {json.dumps(telemetry, indent=2)}
 
 {goal_text}
+
+{bays_text}
+
+IMPORTANT: When the instruction mentions a bay ID (e.g. B-03, S-01, R-02), use the EXACT coordinates from the Bay Directory above. Do NOT guess bay positions.
 
 Output STRICT JSON:
 {{"waypoints": [{{"x": <float>, "y": <float>, "max_speed": <float>}}, ...], "rationale": "...", "estimated_time_s": <float>}}
@@ -157,8 +196,8 @@ Output STRICT JSON:
                     obj = _extract_json(text)
                     waypoints = obj.get("waypoints", [])
                     for wp in waypoints:
-                        wp["x"] = max(0.0, min(30.0, float(wp.get("x", 0))))
-                        wp["y"] = max(0.0, min(20.0, float(wp.get("y", 0))))
+                        wp["x"] = max(0.0, min(40.0, float(wp.get("x", 0))))
+                        wp["y"] = max(0.0, min(25.0, float(wp.get("y", 0))))
                         wp["max_speed"] = max(0.1, min(1.0, float(wp.get("max_speed", 0.5))))
                     return {
                         "waypoints": waypoints,

@@ -161,6 +161,10 @@ class ToolExecutor:
         human = self.world.get("human")
         if human:
             parts.append(f"Human at: ({human.get('x', '?')}, {human.get('y', '?')})")
+        bays = self.world.get("bays", [])
+        if bays:
+            bay_strs = [f"{b['id']}({b['x']},{b['y']})" for b in bays]
+            parts.append(f"Bays: {', '.join(bay_strs)}")
         return "\n".join(parts)
 
 
@@ -228,6 +232,15 @@ class AgenticPlanner:
             for t in TOOL_DEFINITIONS
         )
         memory_text = self.memory.to_context()
+
+        # Build bay directory from world data
+        bays = (world or {}).get("bays", [])
+        if bays:
+            bay_lines = [f"  {b['id']:6s} ({b.get('type','bay'):5s}) → x={b['x']}, y={b['y']}" for b in bays]
+            bay_text = "\n".join(bay_lines)
+        else:
+            bay_text = "  No bays loaded."
+
         denial_text = ""
         if denial_feedback:
             denial_text = f"""
@@ -258,6 +271,11 @@ POLICY RULES:
 - Aisle (y<12): max 0.5 m/s | Loading bay (y>12): max 0.4 m/s
 - Human <1m: STOP | Human <3m: max 0.4 m/s
 - Obstacle clearance: min 0.5m
+
+BAY DIRECTORY (use exact coordinates when targeting a bay):
+{bay_text}
+
+IMPORTANT: When the task mentions a bay ID (e.g. B-03, S-01), use the EXACT coordinates from the Bay Directory.
 
 HARD CONSTRAINTS (never violate):
 - You CANNOT move the robot directly — you only propose actions
