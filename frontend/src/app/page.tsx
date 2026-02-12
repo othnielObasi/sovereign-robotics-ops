@@ -52,8 +52,16 @@ export default function HomePage() {
   useEffect(() => {
     async function checkHealth() {
       try {
-        const res = await fetch(`${API_URL}/health`);
-        if (res.ok) {
+        let res: Response | null = null;
+        for (let attempt = 0; attempt < 3; attempt++) {
+          try {
+            res = await fetch(`${API_URL}/health`, { cache: "no-store" });
+            break;
+          } catch {
+            if (attempt < 2) await new Promise(r => setTimeout(r, 2000 * (attempt + 1)));
+          }
+        }
+        if (res && res.ok) {
           const data = await res.json();
           setStatus({
             api: 'connected',
