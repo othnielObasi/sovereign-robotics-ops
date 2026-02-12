@@ -121,6 +121,12 @@ export async function testPolicy(payload: any) {
 }
 
 
+export async function getTelemetry() {
+  const r = await fetchWithRetry(`${API_BASE}/sim/telemetry`, { cache: "no-store" });
+  if (!r.ok) throw new Error(await parseErrorResponse(r, "Failed to get telemetry"));
+  return r.json();
+}
+
 export async function getWorld() {
   const r = await fetchWithRetry(`${API_BASE}/sim/world`, { cache: "no-store" });
   if (!r.ok) throw new Error(await parseErrorResponse(r, "Failed to get world"));

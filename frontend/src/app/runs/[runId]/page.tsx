@@ -1,10 +1,24 @@
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { getRun, listEvents, stopRun, getWorld, getPathPreview, triggerScenario, generateLLMPlan, executeLLMPlan, analyzeScene, analyzeTelemetry, detectFailures, agenticPropose, getMission } from "@/lib/api";
+import { getRun, listEvents, stopRun, getWorld, getTelemetry, getPathPreview, triggerScenario, generateLLMPlan, executeLLMPlan, analyzeScene, analyzeTelemetry, detectFailures, agenticPropose, getMission } from "@/lib/api";
 import { Map2D } from "@/components/Map2D";
 import { wsUrlForRun } from "@/lib/ws";
 import type { WsMessage } from "@/lib/types";
+
+/* ── Bay resolver (matches backend resolve_bay_from_instruction) ── */
+const BAY_PATTERN = /\b([BSR])-?(\d{1,2})\b/i;
+function resolveBayGoal(instruction: string, bays: any[]): { x: number; y: number } | null {
+  if (!instruction || !bays?.length) return null;
+  const match = instruction.match(BAY_PATTERN);
+  if (!match) return null;
+  const prefix = match[1].toUpperCase();
+  const num = match[2].padStart(2, "0");
+  const bayId = `${prefix}-${num}`;
+  const bay = bays.find((b: any) => b.id?.toUpperCase() === bayId);
+  if (bay && typeof bay.x === "number") return { x: bay.x, y: bay.y };
+  return null;
+}
 
 function Card({ title, children, className = "" }: { title: string; children: React.ReactNode; className?: string }) {
   return (
@@ -142,6 +156,7 @@ export default function RunPage({ params }: { params: { runId: string } }) {
         }
       } catch (_) {}
       try { setWorld(await getWorld()); } catch (_) {}
+      try { setTelemetry(await getTelemetry()); } catch (_) {}
       await refreshEvents();
     })();
   }, [runId]);
@@ -243,7 +258,8 @@ export default function RunPage({ params }: { params: { runId: string } }) {
 
     // Stage 1: Agentic Reasoning
     setPipelineStage("reasoning");
-    const missionGoal = mission?.goal || undefined;
+    const bayGoal = resolveBayGoal(missionInstruction, world?.bays || []);
+    const missionGoal = bayGoal || mission?.goal || undefined;
     try {
       const aResult = await agenticPropose(missionInstruction, missionGoal);
       setAgenticResult(aResult);
@@ -490,7 +506,7 @@ export default function RunPage({ params }: { params: { runId: string } }) {
               </div>
             </div>
             <div className="min-h-[450px]">
-              <Map2D world={world} telemetry={telemetry} pathPoints={pathPoints} planWaypoints={llmPlan?.waypoints || null} showHeatmap={showHeatmap} showTrail={showTrail} safetyState={safety.state} />
+              <Map2D world={world} telemetry={telemetry} pathPoints={pathPoints} planWaypoints={llmPlan?.waypoints || null} missionGoal={resolveBayGoal(missionInstruction, world?.bays || []) || mission?.goal || null} showHeatmap={showHeatmap} showTrail={showTrail} safetyState={safety.state} />
             </div>
             <p className="text-[10px] text-slate-600 mt-1">Scroll to zoom · Drag to pan · Cyan: robot · Red: obstacles · Orange: human · Purple: plan</p>
           </Card>
@@ -551,18 +567,24 @@ export default function RunPage({ params }: { params: { runId: string } }) {
             </div>
 
             {/* Mission context badge */}
-            {mission && (
-              <div className="flex items-center gap-2 mb-2 text-xs text-slate-400">
-                <span className="bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 px-2 py-0.5 rounded-full">
-                  Mission: {mission.title}
-                </span>
-                {mission.goal && (
-                  <span className="bg-slate-700/50 border border-slate-600 text-slate-300 px-2 py-0.5 rounded-full">
-                    Goal: ({mission.goal.x}, {mission.goal.y})
-                  </span>
-                )}
-              </div>
-            )}
+            {(mission || missionInstruction) && (() => {
+              const bayGoal = resolveBayGoal(missionInstruction, world?.bays || []);
+              const activeGoal = bayGoal || mission?.goal || null;
+              return (
+                <div className="flex items-center gap-2 mb-2 text-xs text-slate-400">
+                  {mission && (
+                    <span className="bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 px-2 py-0.5 rounded-full">
+                      Mission: {mission.title}
+                    </span>
+                  )}
+                  {activeGoal && (
+                    <span className={`border px-2 py-0.5 rounded-full ${bayGoal ? "bg-green-500/15 border-green-500/30 text-green-300" : "bg-slate-700/50 border-slate-600 text-slate-300"}`}>
+                      {bayGoal ? "Bay Goal" : "Goal"}: ({activeGoal.x}, {activeGoal.y})
+                    </span>
+                  )}
+                </div>
+              );
+            })()}
 
             {/* Instruction input */}
             <div className="flex gap-2 mb-3">

@@ -50,6 +50,7 @@ export function Map2D({
   telemetry,
   pathPoints,
   planWaypoints,
+  missionGoal,
   showHeatmap = true,
   showTrail = true,
   safetyState = "OK",
@@ -58,6 +59,7 @@ export function Map2D({
   telemetry: any | null;
   pathPoints: Array<Pt> | null;
   planWaypoints?: Array<Pt & { max_speed?: number }> | null;
+  missionGoal?: Pt | null;
   showHeatmap?: boolean;
   showTrail?: boolean;
   safetyState?: string;
@@ -857,9 +859,10 @@ export function Map2D({
       ctx.textAlign = "start";
       ctx.textBaseline = "alphabetic";
 
-      /* target cross-hair — from active sim target OR last plan waypoint */
+      /* target cross-hair — from active sim target OR last plan waypoint OR mission goal */
       const tgt = telemetry.target
-        || (planWaypoints && planWaypoints.length > 0 ? planWaypoints[planWaypoints.length - 1] : null);
+        || (planWaypoints && planWaypoints.length > 0 ? planWaypoints[planWaypoints.length - 1] : null)
+        || (missionGoal && typeof missionGoal.x === "number" ? missionGoal : null);
       if (tgt && typeof tgt.x === "number") {
         const tp = w2c({ x: +tgt.x, y: +tgt.y });
         const cr = 10;
@@ -889,9 +892,39 @@ export function Map2D({
         ctx.fillStyle = C.target;
         ctx.font = `bold ${Math.max(8, 9 * zoom)}px system-ui`;
         ctx.textAlign = "center";
-        ctx.fillText(telemetry.target ? "TARGET" : "DEST", tp.x, tp.y - cr - 5);
+        ctx.fillText(telemetry.target ? "TARGET" : (planWaypoints && planWaypoints.length > 0) ? "DEST" : "GOAL", tp.x, tp.y - cr - 5);
         ctx.textAlign = "start";
       }
+    }
+
+    /* ── Mission Goal target (fallback when no telemetry) ── */
+    if (!telemetry && missionGoal && typeof missionGoal.x === "number") {
+      const tp = w2c({ x: +missionGoal.x, y: +missionGoal.y });
+      const cr = 10;
+      ctx.strokeStyle = `rgba(16,185,129,${0.4 + pulse * 0.3})`;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(tp.x, tp.y, cr + 4 + pulse * 2, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.strokeStyle = C.target;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(tp.x, tp.y, cr, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(tp.x - cr - 4, tp.y);
+      ctx.lineTo(tp.x + cr + 4, tp.y);
+      ctx.moveTo(tp.x, tp.y - cr - 4);
+      ctx.lineTo(tp.x, tp.y + cr + 4);
+      ctx.stroke();
+      ctx.fillStyle = C.target;
+      ctx.beginPath();
+      ctx.arc(tp.x, tp.y, 3, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.font = `bold ${Math.max(8, 9 * zoom)}px system-ui`;
+      ctx.textAlign = "center";
+      ctx.fillText("GOAL", tp.x, tp.y - cr - 5);
+      ctx.textAlign = "start";
     }
 
     /* ── HUD (top-left) ─────────────────────────────────────── */

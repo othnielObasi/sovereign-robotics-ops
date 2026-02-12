@@ -10,9 +10,24 @@ import {
   pauseMission,
   resumeMission,
   replayMission,
+  getWorld,
 } from "@/lib/api";
 import { useRouter } from "next/navigation";
 import type { Mission, MissionStatus } from "@/lib/types";
+
+/* ── Bay resolver (same logic as run page) ── */
+const BAY_PATTERN = /\b([BSR])-?(\d{1,2})\b/i;
+function resolveBayGoal(text: string, bays: any[]): { x: number; y: number } | null {
+  if (!text || !bays?.length) return null;
+  const match = text.match(BAY_PATTERN);
+  if (!match) return null;
+  const prefix = match[1].toUpperCase();
+  const num = match[2].padStart(2, "0");
+  const bayId = `${prefix}-${num}`;
+  const bay = bays.find((b: any) => b.id?.toUpperCase() === bayId);
+  if (bay && typeof bay.x === "number") return { x: bay.x, y: bay.y };
+  return null;
+}
 
 const STATUS_BADGE: Record<MissionStatus, { label: string; cls: string }> = {
   draft:     { label: "Draft",      cls: "bg-slate-600 text-slate-200" },
@@ -32,6 +47,7 @@ export default function MissionsPage() {
   const [editGoalX, setEditGoalX] = useState(0);
   const [editGoalY, setEditGoalY] = useState(0);
   const [filter, setFilter] = useState<"all" | MissionStatus>("all");
+  const [bays, setBays] = useState<any[]>([]);
 
   async function reload() {
     try {
@@ -43,7 +59,11 @@ export default function MissionsPage() {
     }
   }
 
-  useEffect(() => { reload(); }, []);
+  useEffect(() => {
+    reload();
+    // Also fetch bays for goal auto-resolution
+    getWorld().then((w: any) => setBays(w?.bays || [])).catch(() => {});
+  }, []);
 
   async function handleStartRun(missionId: string) {
     try {
@@ -94,8 +114,10 @@ export default function MissionsPage() {
   function startEdit(m: Mission) {
     setEditingId(m.id);
     setEditTitle(m.title);
-    setEditGoalX(m.goal?.x ?? 0);
-    setEditGoalY(m.goal?.y ?? 0);
+    // Auto-resolve bay from title, else use existing goal
+    const resolved = resolveBayGoal(m.title, bays);
+    setEditGoalX(resolved?.x ?? m.goal?.x ?? 0);
+    setEditGoalY(resolved?.y ?? m.goal?.y ?? 0);
   }
 
   async function saveEdit(id: string) {
@@ -180,8 +202,17 @@ export default function MissionsPage() {
                     <input
                       className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-cyan-500"
                       value={editTitle}
-                      onChange={(e) => setEditTitle(e.target.value)}
-                      placeholder="Mission title"
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setEditTitle(val);
+                        // Auto-resolve bay coordinates from title
+                        const resolved = resolveBayGoal(val, bays);
+                        if (resolved) {
+                          setEditGoalX(resolved.x);
+                          setEditGoalY(resolved.y);
+                        }
+                      }}
+                      placeholder="Mission title (e.g. Navigate to B-03)"
                     />
                     <div className="flex gap-3">
                       <div className="flex-1">

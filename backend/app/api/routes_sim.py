@@ -23,6 +23,15 @@ class ScenarioIn(BaseModel):
     )
 
 
+@router.get("/sim/telemetry")
+async def get_telemetry():
+    """Proxy the simulator's current telemetry (robot position, sensors)."""
+    try:
+        return await sim.get_telemetry()
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"sim error: {e}")
+
+
 @router.get("/sim/world", response_model=SimWorld)
 async def get_world():
     """Proxy the simulator's world definition (geofence, obstacles, human)."""
