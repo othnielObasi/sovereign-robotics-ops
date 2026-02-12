@@ -13,6 +13,9 @@ primary_region = "lhr"
   internal_port = 8080
   force_https = true
   processes = ["api"]
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
 
   [[http_service.checks]]
     grace_period = "30s"
