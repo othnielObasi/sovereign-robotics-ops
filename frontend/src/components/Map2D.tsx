@@ -72,6 +72,7 @@ export function Map2D({
   const human = world?.human ?? null;
   const walkingHumans: any[] = telemetry?.walking_humans ?? world?.walking_humans ?? [];
   const idleRobots: any[] = telemetry?.idle_robots ?? world?.idle_robots ?? [];
+  const bays: any[] = world?.bays ?? [];
 
   const baseScale = useMemo(() => {
     const wx = (geo.max_x - geo.min_x) || 1;
@@ -220,6 +221,63 @@ export function Map2D({
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
       ctx.fillText(z.name.toUpperCase().replace("_", " "), tl.x + zw / 2, tl.y + zh / 2);
+    }
+
+    /* ── warehouse bays (docks & shelves) ───────────────────── */
+    for (const bay of bays) {
+      if (typeof bay.x !== "number") continue;
+      const p = w2c({ x: +bay.x, y: +bay.y });
+      const isDock = bay.type === "dock";
+      const bw = isDock ? 4 * baseScale * zoom : 1.5 * baseScale * zoom;
+      const bh = isDock ? 1.2 * baseScale * zoom : 3 * baseScale * zoom;
+
+      if (isDock) {
+        /* dock bay — wide rectangle at top wall */
+        ctx.fillStyle = "rgba(245,158,11,0.08)";
+        ctx.strokeStyle = "rgba(245,158,11,0.35)";
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.roundRect(p.x - bw / 2, p.y - bh / 2, bw, bh, 2);
+        ctx.fill();
+        ctx.stroke();
+
+        /* dock chevron markers */
+        ctx.strokeStyle = "rgba(245,158,11,0.25)";
+        ctx.lineWidth = 1;
+        for (let ci = -1; ci <= 1; ci += 2) {
+          ctx.beginPath();
+          ctx.moveTo(p.x + ci * bw * 0.15, p.y - bh * 0.3);
+          ctx.lineTo(p.x + ci * bw * 0.25, p.y);
+          ctx.lineTo(p.x + ci * bw * 0.15, p.y + bh * 0.3);
+          ctx.stroke();
+        }
+      } else {
+        /* shelf bay — narrow vertical rectangle on walls */
+        ctx.fillStyle = "rgba(100,116,139,0.1)";
+        ctx.strokeStyle = "rgba(100,116,139,0.3)";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.roundRect(p.x - bw / 2, p.y - bh / 2, bw, bh, 1);
+        ctx.fill();
+        ctx.stroke();
+
+        /* shelf lines */
+        for (let s = 0.25; s < 1; s += 0.25) {
+          const sy = p.y - bh / 2 + bh * s;
+          ctx.strokeStyle = "rgba(100,116,139,0.2)";
+          ctx.beginPath();
+          ctx.moveTo(p.x - bw / 2 + 1, sy);
+          ctx.lineTo(p.x + bw / 2 - 1, sy);
+          ctx.stroke();
+        }
+      }
+
+      /* bay label */
+      ctx.fillStyle = isDock ? "rgba(245,158,11,0.6)" : "rgba(148,163,184,0.5)";
+      ctx.font = `bold ${Math.max(7, 8 * zoom)}px monospace`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = isDock ? "top" : "middle";
+      ctx.fillText(bay.id, p.x, isDock ? p.y + bh / 2 + 2 : p.y);
     }
 
     /* ── grid ───────────────────────────────────────────────── */
@@ -856,6 +914,7 @@ export function Map2D({
       { color: C.human, label: "Human" },
       { color: "#fbbf24", label: "Workers" },
       { color: C.obstacle, label: "Obstacle" },
+      { color: "rgba(245,158,11,0.6)", label: "Bay/Dock" },
       { color: C.path, label: "Path" },
       { color: C.plan, label: "LLM Plan" },
       { color: C.target, label: "Target" },
@@ -878,7 +937,7 @@ export function Map2D({
       ctx.textBaseline = "top";
       ctx.fillText(it.label, lx + 12, y);
     });
-  }, [world, telemetry, pathPoints, planWaypoints, baseScale, zoom, pan, showHeatmap, showTrail, safetyState, tick, pad, zones, obstacles, human, walkingHumans, idleRobots, geo]);
+  }, [world, telemetry, pathPoints, planWaypoints, baseScale, zoom, pan, showHeatmap, showTrail, safetyState, tick, pad, zones, obstacles, human, walkingHumans, idleRobots, bays, geo]);
 
   return (
     <canvas
