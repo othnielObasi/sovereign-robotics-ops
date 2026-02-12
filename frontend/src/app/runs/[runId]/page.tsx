@@ -388,7 +388,7 @@ export default function RunPage({ params }: { params: { runId: string } }) {
       </div>
 
       {/* ── Safety Banner (full-width, thin, color-coded) ── */}
-      <div className={`flex items-center justify-center gap-2 px-4 py-2 rounded-lg border text-sm font-semibold ${safetyBannerCls[safety.state] || safetyBannerCls.OK}`}>
+      <div className={`flex items-center justify-center gap-2 px-4 py-2 rounded-lg border text-sm font-semibold animate-banner-pulse ${safetyBannerCls[safety.state] || safetyBannerCls.OK}`}>
         <span>{safetyIcon[safety.state] || "✅"}</span>
         <span>{safety.state}</span>
         {safety.state !== "OK" && <span className="font-normal opacity-80">— {safety.detail}</span>}
@@ -425,14 +425,14 @@ export default function RunPage({ params }: { params: { runId: string } }) {
                     onClick={() => onScenario(s.key)}
                     disabled={!!scenarioLoading || currentStatus === "stopped"}
                     title={s.key.replace(/_/g, " ")}
-                    className={`border rounded-md px-1.5 py-1 text-xs transition disabled:opacity-30 ${s.cls} ${scenarioLoading === s.key ? "animate-pulse" : ""}`}
+                    className={`border rounded-md px-1.5 py-1 text-xs transition disabled:opacity-30 relative ${s.cls} ${scenarioLoading === s.key ? "animate-pulse" : ""} ${scenarioLoading === s.key ? `scenario-active-ring ${s.key === "human_approach" ? "ring-yellow" : s.key === "human_too_close" ? "ring-red" : s.key === "path_blocked" ? "ring-blue" : "ring-green"}` : ""}`}
                   >
                     {s.label}
                   </button>
                 ))}
               </div>
             </div>
-            <div className="min-h-[350px]">
+            <div className="min-h-[450px]">
               <Map2D world={world} telemetry={telemetry} pathPoints={pathPoints} planWaypoints={llmPlan?.waypoints || null} showHeatmap={showHeatmap} showTrail={showTrail} safetyState={safety.state} />
             </div>
             <p className="text-[10px] text-slate-600 mt-1">Scroll to zoom · Drag to pan · Cyan: robot · Red: obstacles · Orange: human · Purple: plan</p>
@@ -662,7 +662,7 @@ export default function RunPage({ params }: { params: { runId: string } }) {
             {events.length === 0 ? (
               <div className="text-slate-500 text-xs text-center py-2">🔗 No events yet.</div>
             ) : (
-              <div className="max-h-60 overflow-y-auto space-y-0.5">
+              <div className="max-h-60 overflow-y-auto space-y-0.5 timeline-live-line">
                 {events.slice(-10).reverse().map((e) => {
                   const icon = e.type === "DECISION" ? "🔵" : e.type === "TELEMETRY" ? "🟢" : "🟠";
                   return (
@@ -689,7 +689,15 @@ export default function RunPage({ params }: { params: { runId: string } }) {
               <div className="text-xs text-slate-500 space-y-1">
                 <div className="flex items-center gap-2 bg-green-500/5 border border-green-500/10 rounded px-2 py-1">
                   <span className="text-green-400 text-[10px]">●</span>
-                  <span className="text-slate-400">System nominal — no active alerts</span>
+                  <span className="text-slate-400">Battery at 96% (Normal)</span>
+                </div>
+                <div className="flex items-center gap-2 bg-green-500/5 border border-green-500/10 rounded px-2 py-1">
+                  <span className="text-green-400 text-[10px]">●</span>
+                  <span className="text-slate-400">Path deviation 0.12m (Within tolerance)</span>
+                </div>
+                <div className="flex items-center gap-2 bg-green-500/5 border border-green-500/10 rounded px-2 py-1">
+                  <span className="text-green-400 text-[10px]">●</span>
+                  <span className="text-slate-400">Motor temp 42°C (Normal)</span>
                 </div>
               </div>
             ) : (
