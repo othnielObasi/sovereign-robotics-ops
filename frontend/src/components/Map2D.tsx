@@ -799,11 +799,20 @@ export function Map2D({
       ctx.textAlign = "start";
       ctx.textBaseline = "alphabetic";
 
-      /* target cross-hair */
-      const tgt = telemetry.target;
+      /* target cross-hair — from active sim target OR last plan waypoint */
+      const tgt = telemetry.target
+        || (planWaypoints && planWaypoints.length > 0 ? planWaypoints[planWaypoints.length - 1] : null);
       if (tgt && typeof tgt.x === "number") {
         const tp = w2c({ x: +tgt.x, y: +tgt.y });
         const cr = 10;
+
+        /* pulsing outer ring */
+        ctx.strokeStyle = `rgba(16,185,129,${0.4 + pulse * 0.3})`;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.arc(tp.x, tp.y, cr + 4 + pulse * 2, 0, Math.PI * 2);
+        ctx.stroke();
+
         ctx.strokeStyle = C.target;
         ctx.lineWidth = 1.5;
         ctx.beginPath();
@@ -822,7 +831,7 @@ export function Map2D({
         ctx.fillStyle = C.target;
         ctx.font = `bold ${Math.max(8, 9 * zoom)}px system-ui`;
         ctx.textAlign = "center";
-        ctx.fillText("TARGET", tp.x, tp.y - cr - 5);
+        ctx.fillText(telemetry.target ? "TARGET" : "DEST", tp.x, tp.y - cr - 5);
         ctx.textAlign = "start";
       }
     }
