@@ -5,7 +5,7 @@ from app.schemas.governance import GovernanceDecision, ActionProposal
 
 
 # --- Policy parameters (MVP constants) ---
-GEOFENCE = {"min_x": 0.0, "max_x": 30.0, "min_y": 0.0, "max_y": 20.0}
+GEOFENCE = {"min_x": 0.0, "max_x": 40.0, "min_y": 0.0, "max_y": 25.0}
 
 ZONE_SPEED_LIMITS = {
     "aisle": 0.5,

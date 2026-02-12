@@ -149,7 +149,7 @@ class ToolExecutor:
         # Add world info if available
         geo = self.world.get("geofence", {})
         if geo:
-            parts.append(f"Geofence: x[{geo.get('min_x', 0)}-{geo.get('max_x', 30)}], y[{geo.get('min_y', 0)}-{geo.get('max_y', 20)}]")
+            parts.append(f"Geofence: x[{geo.get('min_x', 0)}-{geo.get('max_x', 40)}], y[{geo.get('min_y', 0)}-{geo.get('max_y', 25)}]")
         zones = self.world.get("zones", [])
         if zones:
             zone_strs = [f"{z['name']}(y:{z['rect']['min_y']}-{z['rect']['max_y']})" for z in zones if "rect" in z]
@@ -254,7 +254,7 @@ TOOLS (use in order: get_world_state → check_policy → submit_action):
 {tool_text}
 
 POLICY RULES:
-- Geofence: x[0-30], y[0-20] — STOP if outside
+- Geofence: x[0-40], y[0-25] — STOP if outside
 - Aisle (y<12): max 0.5 m/s | Loading bay (y>12): max 0.4 m/s
 - Human <1m: STOP | Human <3m: max 0.4 m/s
 - Obstacle clearance: min 0.5m

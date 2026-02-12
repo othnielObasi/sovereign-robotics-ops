@@ -52,7 +52,7 @@ with WORLD_PATH.open("r", encoding="utf-8") as f:
 OBSTACLES: List[Dict[str, Any]] = list(WORLD.get("obstacles", []))
 HUMAN_DEFAULT = WORLD.get("human", {"x": 14, "y": 7})
 ZONES = WORLD.get("zones", [])
-GEOFENCE = WORLD.get("geofence", {"min_x": 0, "max_x": 30, "min_y": 0, "max_y": 20})
+GEOFENCE = WORLD.get("geofence", {"min_x": 0, "max_x": 40, "min_y": 0, "max_y": 25})
 
 
 class Command(BaseModel):
@@ -110,19 +110,19 @@ class WalkingHuman:
 # Patrol routes that feel natural for a warehouse
 walking_humans: List[WalkingHuman] = [
     WalkingHuman("Worker A", [
-        {"x": 5, "y": 5}, {"x": 5, "y": 9}, {"x": 10, "y": 9}, {"x": 10, "y": 5},
+        {"x": 6, "y": 5}, {"x": 6, "y": 11}, {"x": 14, "y": 11}, {"x": 14, "y": 5},
     ], speed=0.5),
     WalkingHuman("Worker B", [
-        {"x": 20, "y": 14}, {"x": 25, "y": 14}, {"x": 25, "y": 18}, {"x": 20, "y": 18},
+        {"x": 25, "y": 16}, {"x": 32, "y": 16}, {"x": 32, "y": 22}, {"x": 25, "y": 22},
     ], speed=0.4),
     WalkingHuman("Forklift Op", [
-        {"x": 12, "y": 13}, {"x": 22, "y": 13}, {"x": 22, "y": 16}, {"x": 12, "y": 16},
+        {"x": 14, "y": 16}, {"x": 28, "y": 16}, {"x": 28, "y": 20}, {"x": 14, "y": 20},
     ], speed=0.7),
 ]
 
 # ---- Second robot (idle in loading bay, for visual realism) ----
 idle_robots: List[Dict[str, Any]] = [
-    {"x": 26.0, "y": 16.0, "theta": 1.57, "speed": 0.0, "label": "R-02 (Idle)", "status": "idle"},
+    {"x": 34.0, "y": 20.0, "theta": 1.57, "speed": 0.0, "label": "R-02 (Idle)", "status": "idle"},
 ]
 
 

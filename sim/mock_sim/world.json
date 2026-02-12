@@ -1,60 +1,54 @@
 {
   "geofence": {
     "min_x": 0,
-    "max_x": 30,
+    "max_x": 40,
     "min_y": 0,
-    "max_y": 20
+    "max_y": 25
   },
   "zones": [
     {
       "name": "aisle",
       "rect": {
         "min_x": 0,
-        "max_x": 30,
+        "max_x": 40,
         "min_y": 0,
-        "max_y": 12
+        "max_y": 15
       }
     },
     {
       "name": "loading_bay",
       "rect": {
         "min_x": 0,
-        "max_x": 30,
-        "min_y": 12,
-        "max_y": 20
+        "max_x": 40,
+        "min_y": 15,
+        "max_y": 25
       }
     }
   ],
   "obstacles": [
-    {
-      "x": 10,
-      "y": 6
-    },
-    {
-      "x": 18,
-      "y": 8
-    },
-    {
-      "x": 22,
-      "y": 4
-    }
+    { "x": 12, "y": 7 },
+    { "x": 22, "y": 10 },
+    { "x": 30, "y": 5 },
+    { "x": 17, "y": 3 }
   ],
   "human": {
-    "x": 14,
-    "y": 7
+    "x": 18,
+    "y": 9
   },
   "bays": [
-    { "id": "B-01", "x": 3,  "y": 19, "side": "top",    "type": "dock" },
-    { "id": "B-02", "x": 8,  "y": 19, "side": "top",    "type": "dock" },
-    { "id": "B-03", "x": 13, "y": 19, "side": "top",    "type": "dock" },
-    { "id": "B-04", "x": 18, "y": 19, "side": "top",    "type": "dock" },
-    { "id": "B-05", "x": 23, "y": 19, "side": "top",    "type": "dock" },
-    { "id": "B-06", "x": 28, "y": 19, "side": "top",    "type": "dock" },
-    { "id": "S-01", "x": 0.5,"y": 3,  "side": "left",   "type": "shelf" },
-    { "id": "S-02", "x": 0.5,"y": 7,  "side": "left",   "type": "shelf" },
-    { "id": "S-03", "x": 0.5,"y": 11, "side": "left",   "type": "shelf" },
-    { "id": "R-01", "x": 29.5,"y": 3, "side": "right",  "type": "shelf" },
-    { "id": "R-02", "x": 29.5,"y": 7, "side": "right",  "type": "shelf" },
-    { "id": "R-03", "x": 29.5,"y": 11,"side": "right",  "type": "shelf" }
+    { "id": "B-01", "x": 4,   "y": 24, "side": "top",   "type": "dock" },
+    { "id": "B-02", "x": 10,  "y": 24, "side": "top",   "type": "dock" },
+    { "id": "B-03", "x": 16,  "y": 24, "side": "top",   "type": "dock" },
+    { "id": "B-04", "x": 22,  "y": 24, "side": "top",   "type": "dock" },
+    { "id": "B-05", "x": 28,  "y": 24, "side": "top",   "type": "dock" },
+    { "id": "B-06", "x": 34,  "y": 24, "side": "top",   "type": "dock" },
+    { "id": "S-01", "x": 0.5, "y": 3,  "side": "left",  "type": "shelf" },
+    { "id": "S-02", "x": 0.5, "y": 7,  "side": "left",  "type": "shelf" },
+    { "id": "S-03", "x": 0.5, "y": 11, "side": "left",  "type": "shelf" },
+    { "id": "S-04", "x": 0.5, "y": 15, "side": "left",  "type": "shelf" },
+    { "id": "R-01", "x": 39.5,"y": 3,  "side": "right", "type": "shelf" },
+    { "id": "R-02", "x": 39.5,"y": 7,  "side": "right", "type": "shelf" },
+    { "id": "R-03", "x": 39.5,"y": 11, "side": "right", "type": "shelf" },
+    { "id": "R-04", "x": 39.5,"y": 15, "side": "right", "type": "shelf" }
   ]
 }

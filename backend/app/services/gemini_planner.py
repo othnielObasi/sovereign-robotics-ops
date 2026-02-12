@@ -138,7 +138,7 @@ Output STRICT JSON: {{"intent":"MOVE_TO|STOP|WAIT","params":{{...}},"rationale":
             return self._deterministic_plan(telemetry, goal)
 
         goal_text = f"GOAL: {json.dumps(goal)}" if goal else "No specific goal."
-        prompt = f"""You are a robot planner in a 30x20m warehouse.
+        prompt = f"""You are a robot planner in a 40x25m warehouse.
 
 INSTRUCTION: {instruction}
 
