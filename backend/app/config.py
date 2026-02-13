@@ -126,5 +126,7 @@ class Settings(BaseSettings):
                 )
 
 
+
 settings = Settings()
+print(f"[DEBUG] SRO ENVIRONMENT: {settings.environment}")
 settings.validate_runtime()
