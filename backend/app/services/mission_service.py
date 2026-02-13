@@ -2,6 +2,10 @@ from __future__ import annotations
 
 import json
 from typing import Any, Dict, List, Optional
+import math
+
+import httpx
+from app.config import settings
 from sqlalchemy.orm import Session
 
 from app.db.models import Mission, MissionAudit
@@ -39,10 +43,13 @@ class MissionService:
     # ── CRUD ─────────────────────────────────────────────────
 
     def create(self, db: Session, payload: MissionCreate) -> Mission:
+        # Normalize goal coords: clamp to geofence and snap to nearest bay if appropriate
+        goal = self._normalize_goal(payload.goal)
+
         m = Mission(
             id=new_id("mis"),
             title=payload.title,
-            goal_json=json.dumps(payload.goal, ensure_ascii=False),
+            goal_json=json.dumps(goal, ensure_ascii=False),
             status="draft",
             created_at=utc_now(),
         )
@@ -73,10 +80,11 @@ class MissionService:
 
         if payload.goal is not None:
             old_goal = json.loads(m.goal_json)
-            if payload.goal != old_goal:
+            new_goal = self._normalize_goal(payload.goal)
+            if new_goal != old_goal:
                 old_vals["goal"] = old_goal
-                new_vals["goal"] = payload.goal
-                m.goal_json = json.dumps(payload.goal, ensure_ascii=False)
+                new_vals["goal"] = new_goal
+                m.goal_json = json.dumps(new_goal, ensure_ascii=False)
 
         if new_vals:
             m.updated_at = utc_now()
@@ -90,6 +98,64 @@ class MissionService:
             db.commit()
             db.refresh(m)
         return m
+
+    # --- Goal normalization helpers ---
+    def _normalize_goal(self, goal: Dict[str, Any]) -> Dict[str, Any]:
+        """Clamp goal to geofence and snap to nearest bay if within threshold.
+
+        This function makes a best-effort attempt to fetch the world from the
+        simulator (using settings.sim_base_url). If the world cannot be fetched
+        the original goal is returned unchanged.
+        """
+        try:
+            x = float(goal.get("x", 0))
+            y = float(goal.get("y", 0))
+        except Exception:
+            return goal
+
+        # Try to fetch world definition from simulator
+        try:
+            url = settings.sim_base_url.rstrip("/") + "/world"
+            with httpx.Client(timeout=2.0) as client:
+                r = client.get(url)
+                r.raise_for_status()
+                world = r.json()
+        except Exception:
+            return {"x": x, "y": y}
+
+        # Clamp to geofence if present
+        gf = world.get("geofence") or {}
+        try:
+            min_x = float(gf.get("min_x", x))
+            max_x = float(gf.get("max_x", x))
+            min_y = float(gf.get("min_y", y))
+            max_y = float(gf.get("max_y", y))
+            x = max(min_x, min(x, max_x))
+            y = max(min_y, min(y, max_y))
+        except Exception:
+            pass
+
+        # Snap to nearest bay if within threshold
+        bays = world.get("bays") or []
+        best = None
+        best_d = None
+        for b in bays:
+            try:
+                bx = float(b.get("x", 0))
+                by = float(b.get("y", 0))
+            except Exception:
+                continue
+            d = math.hypot(bx - x, by - y)
+            if best is None or d < best_d:
+                best = (bx, by)
+                best_d = d
+
+        # Snap threshold (meters in sim units)
+        SNAP_THRESHOLD = 1.5
+        if best is not None and best_d is not None and best_d <= SNAP_THRESHOLD:
+            x, y = best
+
+        return {"x": x, "y": y}
 
     def set_status(
         self, db: Session, mission_id: str, new_status: str,
