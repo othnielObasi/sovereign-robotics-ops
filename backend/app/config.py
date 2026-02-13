@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------
     backend_host: str = "0.0.0.0"
     backend_port: int = 8080
-    environment: str = "development"  # development | staging | production
+    environment: str = "development"  # development | staging | production (FORCED for demo)
 
     # ------------------------------------------------------------
     # Database
