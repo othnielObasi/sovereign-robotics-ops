@@ -1,71 +1,59 @@
-version: "3.8"
 
 services:
-  postgres:
-    image: postgres:16
-    restart: always
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.prod
+      args:
+        NEXT_PUBLIC_API_BASE: ${NEXT_PUBLIC_API_BASE}
+    ports:
+      - "80:3000"
     environment:
-      POSTGRES_USER: sro
-      POSTGRES_PASSWORD: sro_production_2026
-      POSTGRES_DB: sro
-    ports:
-      - "127.0.0.1:5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U sro"]
-      interval: 5s
-      timeout: 3s
-      retries: 5
-
-  mock-sim:
-    build: ./sim/mock_sim
-    restart: always
-    ports:
-      - "127.0.0.1:8090:8090"
-    environment:
-      SIM_TICK_HZ: "10"
-    command: >
-      uvicorn server:app --host 0.0.0.0 --port 8090
-
-  backend:
-    build: ./backend
-    restart: always
-    ports:
-      - "0.0.0.0:8080:8080"
+      NEXT_PUBLIC_API_BASE: ${NEXT_PUBLIC_API_BASE}
+      NODE_ENV: production
     depends_on:
-      postgres:
-        condition: service_healthy
-      mock-sim:
-        condition: service_started
+      - backend
+    restart: always
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    # Do NOT expose 8080:8080 to the public
     environment:
       DATABASE_URL: "postgresql://sro:sro_production_2026@postgres:5432/sro"
-      SIM_BASE_URL: "http://mock-sim:8090"
       CORS_ORIGINS: "http://104.238.128.128,http://104.238.128.128:3000,http://104.238.128.128:80,http://localhost:3000"
       GEMINI_API_KEY: "${GEMINI_API_KEY}"
       GEMINI_PROJECT_ID: "${GEMINI_PROJECT_ID}"
       GEMINI_ENABLED: "true"
-      # ENVIRONMENT removed to allow config.py/.env to control mode
       JWT_SECRET: "${JWT_SECRET}"
       SIM_TOKEN: "${SIM_TOKEN}"
+    depends_on:
+      - db
     volumes:
       - backend_data:/app/data
     command: >
       sh -c "python -m app.preflight &&
              uvicorn app.main:app --host 0.0.0.0 --port 8080"
-
-  frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile.prod
-    restart: always
+  db:
+    image: postgres:16
     ports:
-      - "0.0.0.0:3000:3000"
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: sro
+      POSTGRES_PASSWORD: sro_production_2026
+      POSTGRES_DB: sro
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+  sim:
+    build:
+      context: ./sim/mock_sim
+      dockerfile: Dockerfile
+    ports:
+      - "8090:8090"
+    environment:
+      SIM_BASE_URL: "http://mock-sim:8090"
     depends_on:
       - backend
-    environment:
-      NEXT_PUBLIC_API_BASE: "http://104.238.128.128:8080"
-      NODE_ENV: production
 
 volumes:
   postgres_data:

@@ -1,9 +1,11 @@
+
 FROM node:20-alpine AS builder
 WORKDIR /app
 COPY package.json /app/package.json
 RUN npm install
 COPY . /app
-ENV NEXT_PUBLIC_API_BASE=http://104.238.128.128:8080
+ARG NEXT_PUBLIC_API_BASE
+ENV NEXT_PUBLIC_API_BASE=${NEXT_PUBLIC_API_BASE}
 RUN npm run build
 
 FROM node:20-alpine AS runner
