@@ -41,6 +41,16 @@ async def get_world():
         raise HTTPException(status_code=502, detail=f"sim error: {e}")
 
 
+@router.get("/bays")
+async def list_bays():
+    """Return the list of bays (docks/shelves/receiving) from the simulator world."""
+    try:
+        world = await sim.get_world()
+        return {"bays": world.get("bays", [])}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"sim error: {e}")
+
+
 @router.post("/sim/scenario")
 async def trigger_scenario(body: ScenarioIn):
     """Inject a deterministic scenario into the simulator for demo purposes.

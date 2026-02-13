@@ -54,6 +54,7 @@ export function Map2D({
   showHeatmap = true,
   showTrail = true,
   safetyState = "OK",
+  hoveredWaypointIdx = null,
 }: {
   world: any | null;
   telemetry: any | null;
@@ -63,6 +64,7 @@ export function Map2D({
   showHeatmap?: boolean;
   showTrail?: boolean;
   safetyState?: string;
+  hoveredWaypointIdx?: number | null;
 }) {
   const ref = useRef<HTMLCanvasElement | null>(null);
   const W = 600,
@@ -665,6 +667,18 @@ export function Map2D({
           ctx.font = `${Math.max(7, 8 * zoom)}px monospace`;
           ctx.textBaseline = "top";
           ctx.fillText(`${wp.max_speed.toFixed(1)}m/s`, p.x, p.y + 14);
+        }
+        // hovered waypoint highlight (if provided)
+        if (typeof hoveredWaypointIdx === "number" && hoveredWaypointIdx === i) {
+          ctx.save();
+          ctx.strokeStyle = "rgba(168,85,247,0.95)";
+          ctx.lineWidth = 3;
+          ctx.shadowColor = "rgba(168,85,247,0.45)";
+          ctx.shadowBlur = 12;
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, 18, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.restore();
         }
       }
       ctx.textAlign = "start";

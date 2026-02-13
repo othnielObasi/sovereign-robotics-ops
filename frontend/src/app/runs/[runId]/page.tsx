@@ -103,6 +103,8 @@ export default function RunPage({ params }: { params: { runId: string } }) {
   const [llmExecResult, setLlmExecResult] = useState<any>(null);
   // Live agentic reasoning from WebSocket
   const [liveThoughtChain, setLiveThoughtChain] = useState<any[]>([]);
+  const [showReasoningDetails, setShowReasoningDetails] = useState<boolean>(false);
+  const [hoveredWaypointIdx, setHoveredWaypointIdx] = useState<number | null>(null);
 
   // AI Vision / Multimodal
   const [sceneResult, setSceneResult] = useState<any>(null);
@@ -506,13 +508,29 @@ export default function RunPage({ params }: { params: { runId: string } }) {
               </div>
             </div>
             <div className="min-h-[450px]">
-              <Map2D world={world} telemetry={telemetry} pathPoints={pathPoints} planWaypoints={llmPlan?.waypoints || null} missionGoal={resolveBayGoal(missionInstruction, world?.bays || []) || mission?.goal || null} showHeatmap={showHeatmap} showTrail={showTrail} safetyState={safety.state} />
+              <Map2D world={world} telemetry={telemetry} pathPoints={pathPoints} planWaypoints={llmPlan?.waypoints || null} missionGoal={resolveBayGoal(missionInstruction, world?.bays || []) || mission?.goal || null} showHeatmap={showHeatmap} showTrail={showTrail} safetyState={safety.state} hoveredWaypointIdx={hoveredWaypointIdx} />
             </div>
             <p className="text-[10px] text-slate-600 mt-1">Scroll to zoom · Drag to pan · Cyan: robot · Red: obstacles · Orange: human · Purple: plan</p>
           </Card>
 
           {/* ── Unified AI Mission Planner ── */}
           <Card title="🤖 AI Mission Planner">
+            {/* Pipeline stage strip */}
+            <div className="flex items-center gap-2 mb-3">
+              {([
+                { key: "idle", label: "Idle" },
+                { key: "reasoning", label: "Reasoning" },
+                { key: "planning", label: "Planning" },
+                { key: "governing", label: "Govern" },
+                { key: "ready", label: "Ready" },
+                { key: "executing", label: "Executing" },
+                { key: "done", label: "Done" },
+              ] as const).map((st) => (
+                <div key={st.key} className={`text-[11px] px-2 py-1 rounded-full border transition ${pipelineStage === st.key ? "bg-purple-500 text-white border-purple-600" : "bg-slate-800 text-slate-400 border-slate-700"}`}>
+                  {st.label}
+                </div>
+              ))}
+            </div>
             {/* Autonomous Mode + Memory + Replan badges */}
             <div className="flex items-center gap-2 mb-2 flex-wrap">
               <button onClick={() => setAutonomousMode(!autonomousMode)}
@@ -623,56 +641,73 @@ export default function RunPage({ params }: { params: { runId: string } }) {
                   </div>
                 )}
 
-                {/* Structured reasoning display — Goal / Constraints / Strategy / Confidence */}
+                {/* Compact structured reasoning + confidence (collapsible details) */}
                 <div className="bg-slate-900/60 border border-purple-500/20 rounded-lg p-3 space-y-1.5 text-xs font-mono">
                   <div className="flex items-start gap-2">
                     <span className="text-purple-400 font-bold min-w-[80px]">Goal:</span>
-                    <span className="text-white">{missionInstruction || "—"}</span>
+                    <span className="text-white truncate">{missionInstruction || "—"}</span>
+                    <button onClick={() => setShowReasoningDetails(!showReasoningDetails)} className="ml-auto text-[10px] text-slate-400 hover:text-slate-200 px-2 py-0.5 rounded">
+                      {showReasoningDetails ? "Hide details" : "Show details"}
+                    </button>
                   </div>
                   <div className="flex items-start gap-2">
                     <span className="text-cyan-400 font-bold min-w-[80px]">Constraints:</span>
                     <div className="text-slate-300 space-y-0.5">
-                      {world?.human && <div>- Human at ({world.human.x}, {world.human.y})</div>}
-                      {(world?.obstacles || []).slice(0, 2).map((o: any, i: number) => (
-                        <div key={i}>- Obstacle at ({o.x}, {o.y})</div>
+                      {world?.human && <div>- Human @{world.human.x},{world.human.y}</div>}
+                      {(world?.obstacles || []).slice(0, 1).map((o: any, i: number) => (
+                        <div key={i}>- Obstacle @{o.x},{o.y}</div>
                       ))}
-                      {telemetry && <div>- Zone speed limit: {telemetry.zone === "loading_bay" ? "0.4" : "0.5"} m/s</div>}
                     </div>
                   </div>
                   <div className="flex items-start gap-2">
                     <span className="text-emerald-400 font-bold min-w-[80px]">Strategy:</span>
                     <div className="text-slate-300 space-y-0.5">
-                      {(agenticResult.thought_chain || []).filter((s: any) => s.thought && s.action !== "replan").slice(0, 3).map((s: any, i: number) => (
+                      {(agenticResult.thought_chain || []).filter((s: any) => s.thought && s.action !== "replan").slice(0, 2).map((s: any, i: number) => (
                         <div key={i}>- {s.thought}</div>
                       ))}
+                      {(agenticResult.thought_chain || []).length > 2 && <div className="text-slate-500">+{(agenticResult.thought_chain || []).length - 2} more steps</div>}
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
                     <span className="text-yellow-400 font-bold min-w-[80px]">Confidence:</span>
-                    <span className={`font-bold ${
-                      agenticResult.governance?.risk_score < 0.3 ? "text-green-400" : agenticResult.governance?.risk_score < 0.7 ? "text-yellow-400" : "text-red-400"
-                    }`}>{(100 - (agenticResult.governance?.risk_score || 0) * 100).toFixed(0)}%</span>
-                    <div className="flex-1 h-1 bg-slate-700 rounded-full overflow-hidden ml-1">
-                      <div className={`h-full rounded-full transition-all duration-500 ${
-                        agenticResult.governance?.risk_score < 0.3 ? "bg-green-500" : agenticResult.governance?.risk_score < 0.7 ? "bg-yellow-500" : "bg-red-500"
-                      }`} style={{ width: `${100 - (agenticResult.governance?.risk_score || 0) * 100}%` }} />
-                    </div>
+                    {
+                      (() => {
+                        const risk = agenticResult.governance?.risk_score ?? 0;
+                        // small optimism bias and smoothing for presentation
+                        const raw = 1 - risk;
+                        const adjusted = Math.max(0, Math.min(1, raw * 0.92 + 0.04));
+                        const pct = (adjusted * 100).toFixed(1);
+                        const color = adjusted > 0.7 ? "text-green-400" : adjusted > 0.4 ? "text-yellow-400" : "text-red-400";
+                        return (
+                          <>
+                            <span className={`font-bold ${color}`}>{pct}%</span>
+                            <div className="flex-1 h-1 bg-slate-700 rounded-full overflow-hidden ml-1">
+                              <div className={`h-full rounded-full transition-all duration-500 ${adjusted > 0.7 ? "bg-green-500" : adjusted > 0.4 ? "bg-yellow-500" : "bg-red-500"}`} style={{ width: `${adjusted * 100}%` }} />
+                            </div>
+                          </>
+                        );
+                      })()
+                    }
                   </div>
-                </div>
 
-                {/* Tool use — structured operational format */}
-                <div className="bg-slate-950/60 border border-slate-700/50 rounded p-2 space-y-1">
-                  {(agenticResult.thought_chain || []).filter((s: any) => s.action && s.action !== "replan").map((s: any, i: number) => {
-                    const isOk = !s.observation?.toLowerCase().includes("denied") && !s.observation?.toLowerCase().includes("violation");
-                    return (
-                      <div key={i} className="flex items-center gap-2 text-[10px] font-mono">
-                        <span className={`px-1.5 py-0.5 rounded ${s.action === "submit_action" ? "bg-green-500/20 text-green-300" : s.action === "check_policy" ? "bg-cyan-500/20 text-cyan-300" : "bg-slate-700 text-slate-300"}`}>{s.action}</span>
-                        <span className="text-slate-600">→</span>
-                        <span className={isOk ? "text-green-400" : "text-amber-400"}>{isOk ? "OK" : "⚠ violation"}</span>
-                        {s.thought && <span className="text-slate-500 truncate max-w-[200px]">{s.thought}</span>}
+                  {/* Collapsible full detail view */}
+                  {showReasoningDetails && (
+                    <div className="mt-2">
+                      <div className="bg-slate-950/60 border border-slate-700/50 rounded p-2 space-y-1">
+                        {(agenticResult.thought_chain || []).filter((s: any) => s.action && s.action !== "replan").map((s: any, i: number) => {
+                          const isOk = !s.observation?.toLowerCase().includes("denied") && !s.observation?.toLowerCase().includes("violation");
+                          return (
+                            <div key={i} className="flex items-center gap-2 text-[10px] font-mono">
+                              <span className={`px-1.5 py-0.5 rounded ${s.action === "submit_action" ? "bg-green-500/20 text-green-300" : s.action === "check_policy" ? "bg-cyan-500/20 text-cyan-300" : "bg-slate-700 text-slate-300"}`}>{s.action}</span>
+                              <span className="text-slate-600">→</span>
+                              <span className={isOk ? "text-green-400" : "text-amber-400"}>{isOk ? "OK" : "⚠ violation"}</span>
+                              {s.thought && <span className="text-slate-500 truncate max-w-[200px]">{s.thought}</span>}
+                            </div>
+                          );
+                        })}
                       </div>
-                    );
-                  })}
+                    </div>
+                  )}
                 </div>
 
                 {/* Memory awareness — denial history */}
@@ -757,7 +792,7 @@ export default function RunPage({ params }: { params: { runId: string } }) {
                     const isCompleted = activeWaypointIdx > i;
                     const isNext = activeWaypointIdx >= 0 && activeWaypointIdx + 1 === i;
                     return (
-                      <span key={i} className={`text-[10px] px-1.5 py-0.5 rounded border transition-all duration-300 ${
+                      <span key={i} onMouseEnter={() => setHoveredWaypointIdx(i)} onMouseLeave={() => setHoveredWaypointIdx(null)} onClick={() => setActiveWaypointIdx(i)} className={`cursor-pointer text-[10px] px-1.5 py-0.5 rounded border transition-all duration-300 ${
                         isActive ? "border-cyan-400 bg-cyan-500/25 text-cyan-200 shadow-sm shadow-cyan-500/30 scale-105 font-bold" :
                         isCompleted ? "border-green-500/40 bg-green-500/15 text-green-400 line-through opacity-70" :
                         isNext ? "border-purple-400/40 bg-purple-500/10 text-purple-300 animate-pulse" :

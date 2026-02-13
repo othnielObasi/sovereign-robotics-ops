@@ -13,6 +13,7 @@ from app.schemas.run import RunOut, RunStartResponse
 from app.schemas.events import EventOut
 from app.services.run_service import RunService
 from app.services.gemini_planner import GeminiPlanner
+from app.config import settings
 
 router = APIRouter()
 run_svc: RunService | None = None
@@ -79,6 +80,15 @@ async def start_run(
             }
             svc._append_event(db, run.id, "PLAN", plan_payload)
             db.commit()
+        else:
+            # If configuration requires an LLM plan at run start, enforce it.
+            if settings.llm_enabled and getattr(settings, "require_llm_plan_at_start", False):
+                # stop the run we just started and surface error
+                try:
+                    await svc.stop_run(db, run.id)
+                except Exception:
+                    pass
+                raise HTTPException(status_code=503, detail="LLM plan required at start but generation failed")
     except Exception:
         # Non-fatal: continue even if planner fails
         try:

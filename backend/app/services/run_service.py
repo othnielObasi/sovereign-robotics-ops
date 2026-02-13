@@ -13,6 +13,7 @@ from app.services.sim_adapter import SimAdapter
 from app.services.agent_service import AgentRouter
 from app.services.governance_engine import GovernanceEngine
 from app.services.telemetry_service import TelemetryService
+from app.policies.rules_python import ZONE_SPEED_LIMITS
 from app.utils.ids import new_id
 from app.utils.time import utc_now
 from app.utils.hashing import sha256_canonical
@@ -181,6 +182,14 @@ class RunService:
                     else:
                         # Agent proposes action (may be LLM-driven depending on settings)
                         proposal = await self.agent.propose(telemetry, goal, nl_task, last_governance, world_state)
+                    # Clamp planned max_speed to zone limits to avoid trivial NEEDS_REVIEW
+                    if proposal.intent == "MOVE_TO":
+                        zone = telemetry.get("zone", "aisle")
+                        limit = float(ZONE_SPEED_LIMITS.get(zone, 0.5))
+                        p = proposal.params or {}
+                        p["max_speed"] = min(float(p.get("max_speed", 0.5)), limit)
+                        proposal.params = p
+
                     proposal_payload = proposal.model_dump()
 
                     # Governance evaluates

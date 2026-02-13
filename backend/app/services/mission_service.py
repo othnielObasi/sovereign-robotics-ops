@@ -9,6 +9,7 @@ from app.config import settings
 from sqlalchemy.orm import Session
 
 from app.db.models import Mission, MissionAudit
+from app.services.gemini_planner import resolve_bay_from_instruction
 from app.schemas.mission import MissionCreate, MissionUpdate
 from app.utils.ids import new_id
 from app.utils.time import utc_now
@@ -77,6 +78,47 @@ class MissionService:
             old_vals["title"] = m.title
             new_vals["title"] = payload.title
             m.title = payload.title
+
+            # If no explicit goal was provided, attempt to resolve a bay ID from
+            # the new title and snap the mission goal to that bay (best-effort).
+            if payload.goal is None:
+                try:
+                    # Try to fetch world (reuse same fallbacks as _normalize_goal)
+                    world = None
+                    try:
+                        backend_url = f"http://127.0.0.1:{settings.backend_port}/sim/world"
+                        with httpx.Client(timeout=1.0) as client:
+                            r = client.get(backend_url)
+                            r.raise_for_status()
+                            world = r.json()
+                    except Exception:
+                        world = None
+                    if world is None:
+                        try:
+                            url = settings.sim_base_url.rstrip("/") + "/world"
+                            with httpx.Client(timeout=1.0) as client:
+                                r = client.get(url)
+                                r.raise_for_status()
+                                world = r.json()
+                        except Exception:
+                            world = None
+                    if world is None:
+                        # last resort local file
+                        from pathlib import Path
+
+                        repo_root = Path(__file__).resolve().parents[4]
+                        world_path = repo_root / "sim" / "mock_sim" / "world.json"
+                        if world_path.exists():
+                            with world_path.open() as fh:
+                                world = json.load(fh)
+                    bays = (world or {}).get("bays") or []
+                    resolved = resolve_bay_from_instruction(payload.title or "", bays)
+                    if resolved:
+                        new_vals["goal"] = resolved
+                        m.goal_json = json.dumps(resolved, ensure_ascii=False)
+                except Exception:
+                    # best-effort only; ignore any errors
+                    pass
 
         if payload.goal is not None:
             old_goal = json.loads(m.goal_json)
