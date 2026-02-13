@@ -199,6 +199,15 @@ Output STRICT JSON:
                         wp["x"] = max(0.0, min(40.0, float(wp.get("x", 0))))
                         wp["y"] = max(0.0, min(25.0, float(wp.get("y", 0))))
                         wp["max_speed"] = max(0.1, min(1.0, float(wp.get("max_speed", 0.5))))
+                    # Ensure last waypoint matches the goal (snap to bay coords)
+                    if goal and waypoints:
+                        gx, gy = float(goal.get("x", 0)), float(goal.get("y", 0))
+                        last = waypoints[-1]
+                        if abs(last["x"] - gx) > 1.0 or abs(last["y"] - gy) > 1.0:
+                            waypoints.append({"x": gx, "y": gy, "max_speed": last["max_speed"]})
+                    elif goal and not waypoints:
+                        gx, gy = float(goal.get("x", 0)), float(goal.get("y", 0))
+                        waypoints = [{"x": gx, "y": gy, "max_speed": 0.4}]
                     return {
                         "waypoints": waypoints,
                         "rationale": f"[{model}] {obj.get('rationale', '')}",

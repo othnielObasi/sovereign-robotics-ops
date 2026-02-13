@@ -859,10 +859,12 @@ export function Map2D({
       ctx.textAlign = "start";
       ctx.textBaseline = "alphabetic";
 
-      /* target cross-hair — from active sim target OR last plan waypoint OR mission goal */
-      const tgt = telemetry.target
+      /* target cross-hair — priority: mission goal (bay) > plan last waypoint > sim target */
+      const tgt = (missionGoal && typeof missionGoal.x === "number" ? missionGoal : null)
         || (planWaypoints && planWaypoints.length > 0 ? planWaypoints[planWaypoints.length - 1] : null)
-        || (missionGoal && typeof missionGoal.x === "number" ? missionGoal : null);
+        || telemetry.target;
+      const tgtLabel = (missionGoal && typeof missionGoal.x === "number") ? "GOAL"
+        : (planWaypoints && planWaypoints.length > 0) ? "DEST" : "TARGET";
       if (tgt && typeof tgt.x === "number") {
         const tp = w2c({ x: +tgt.x, y: +tgt.y });
         const cr = 10;
@@ -892,7 +894,7 @@ export function Map2D({
         ctx.fillStyle = C.target;
         ctx.font = `bold ${Math.max(8, 9 * zoom)}px system-ui`;
         ctx.textAlign = "center";
-        ctx.fillText(telemetry.target ? "TARGET" : (planWaypoints && planWaypoints.length > 0) ? "DEST" : "GOAL", tp.x, tp.y - cr - 5);
+        ctx.fillText(tgtLabel, tp.x, tp.y - cr - 5);
         ctx.textAlign = "start";
       }
     }
