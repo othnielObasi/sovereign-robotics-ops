@@ -56,9 +56,9 @@ async def start_run(
     # Create run and launch loop
     run = svc.start_run(db, mission_id)
 
-    # Attempt to generate an initial LLM plan (GeminiPlanner) for audit and operator visibility.
-    # We do this synchronously from the start endpoint so every mission execution is seeded
-    # with an explicit planning proposal, regardless of agent runtime mode.
+    # Attempt to generate an initial LLM plan (GeminiPlanner) for execution.
+    # If successful, attach plan waypoints to the RunService so the runtime
+    # loop will follow them; also append PLAN event for audit.
     try:
         telemetry = None
         try:
@@ -67,18 +67,24 @@ async def start_run(
             telemetry = {}
 
         planner = GeminiPlanner()
-        proposal = await planner.propose(telemetry, json.loads(mission.goal_json), mission.title)
-        plan_payload = {
-            "mission_id": mission.id,
-            "proposal": proposal.model_dump(),
-            "note": "Initial LLM plan generated at start()",
-        }
-        # Append plan event to chain-of-trust for the run
-        svc._append_event(db, run.id, "PLAN", plan_payload)
-        db.commit()
+        # Use the planner's generate_plan API to obtain multi-waypoint plan
+        plan = await planner.generate_plan(telemetry, mission.title, json.loads(mission.goal_json))
+        if plan and plan.get("waypoints"):
+            # Attach plan waypoints to run service in-memory store
+            svc._plans[run.id] = plan.get("waypoints")
+            plan_payload = {
+                "mission_id": mission.id,
+                "plan": plan,
+                "note": "Initial LLM multi-waypoint plan generated at start()",
+            }
+            svc._append_event(db, run.id, "PLAN", plan_payload)
+            db.commit()
     except Exception:
         # Non-fatal: continue even if planner fails
-        db.rollback()
+        try:
+            db.rollback()
+        except Exception:
+            pass
 
     # Mark mission as executing
     mission.status = "executing"

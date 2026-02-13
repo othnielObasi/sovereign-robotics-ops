@@ -33,6 +33,7 @@ class RunService:
         self._tasks: Dict[str, asyncio.Task] = {}
         self._stop_flags: Dict[str, asyncio.Event] = {}
         self._ws_broadcast = None  # injected by WS manager
+        self._plans: Dict[str, List[Dict[str, Any]]] = {}
 
         self.sim = SimAdapter()
         self.agent = AgentRouter()
@@ -85,6 +86,7 @@ class RunService:
         db.commit()
         db.refresh(run)
 
+        # launch loop; plan may be attached later via self._plans[run.id]
         self._launch_loop(run.id)
         return run
 
@@ -158,15 +160,27 @@ class RunService:
                         if self._ws_broadcast:
                             await self._ws_broadcast(run_id, {"kind": "alert", "data": {"event": e}})
 
-                    # Agent proposes action
+                    # If an explicit plan exists for this run, follow it waypoint-by-waypoint.
+                    proposal: ActionProposal
                     nl_task = mission.title if mission else "Navigate to goal"
-                    # Pass world state for agentic mode
                     world_state = None
                     try:
                         world_state = await self.sim.get_world()
                     except Exception:
                         pass
-                    proposal: ActionProposal = await self.agent.propose(telemetry, goal, nl_task, last_governance, world_state)
+
+                    plan_wps = self._plans.get(run_id)
+                    if plan_wps:
+                        # Use the first waypoint as the next action
+                        wp = plan_wps[0]
+                        proposal = ActionProposal(
+                            intent="MOVE_TO",
+                            params={"x": float(wp.get("x")), "y": float(wp.get("y")), "max_speed": float(wp.get("max_speed", 0.5))},
+                            rationale="Following LLM plan waypoint",
+                        )
+                    else:
+                        # Agent proposes action (may be LLM-driven depending on settings)
+                        proposal = await self.agent.propose(telemetry, goal, nl_task, last_governance, world_state)
                     proposal_payload = proposal.model_dump()
 
                     # Governance evaluates
@@ -194,6 +208,15 @@ class RunService:
                         exec_payload = {"command": cmd, "result": execution}
                         self._append_event(db, run_id, "EXECUTION", exec_payload)
                         was_executed = True
+
+                        # If we executed a planned waypoint, remove it from the plan
+                        if plan_wps:
+                            try:
+                                self._plans[run_id].pop(0)
+                                if not self._plans[run_id]:
+                                    self._plans.pop(run_id, None)
+                            except Exception:
+                                pass
 
                     # Record outcome in agent memory (agentic mode)
                     self.agent.record_outcome(proposal, gov_decision, was_executed)
