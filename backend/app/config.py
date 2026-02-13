@@ -77,7 +77,7 @@ class Settings(BaseSettings):
     llm_enabled: bool = False
     llm_provider: str = "gemini"  # gemini | agentic | openai | mock
     # If true, starting a run will fail unless an LLM multi-waypoint plan is produced
-    require_llm_plan_at_start: bool = False
+    require_llm_plan_at_start: bool = True
 
     # ------------------------------------------------------------
     # Observability

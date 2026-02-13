@@ -129,6 +129,12 @@ async def lifespan(app: FastAPI):
     from app.db.models import Run as _Run
     _db = _SL()
     try:
+        # Rehydrate persisted plans for any running runs before resuming their loops
+        try:
+            run_service.rehydrate_plans(_db)
+        except Exception as _:
+            logger.warning("Could not rehydrate plans from DB")
+
         stale = _db.query(_Run).filter(_Run.status == "running").all()
         for r in stale:
             logger.info("Startup: auto-resuming run %s", r.id)
