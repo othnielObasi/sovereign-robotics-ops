@@ -113,14 +113,30 @@ class MissionService:
         except Exception:
             return goal
 
-        # Try to fetch world definition from simulator
+        # Try to fetch world definition. Prefer internal backend proxy (/sim/world)
+        world = None
+        # First try local backend proxy to sim
         try:
-            url = settings.sim_base_url.rstrip("/") + "/world"
+            backend_url = f"http://127.0.0.1:{settings.backend_port}/sim/world"
             with httpx.Client(timeout=2.0) as client:
-                r = client.get(url)
+                r = client.get(backend_url)
                 r.raise_for_status()
                 world = r.json()
         except Exception:
+            world = None
+
+        # Fallback: call simulator base URL directly
+        if world is None:
+            try:
+                url = settings.sim_base_url.rstrip("/") + "/world"
+                with httpx.Client(timeout=2.0) as client:
+                    r = client.get(url)
+                    r.raise_for_status()
+                    world = r.json()
+            except Exception:
+                world = None
+
+        if world is None:
             return {"x": x, "y": y}
 
         # Clamp to geofence if present
