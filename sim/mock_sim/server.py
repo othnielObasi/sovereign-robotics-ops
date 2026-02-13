@@ -121,6 +121,28 @@ walking_humans: List[WalkingHuman] = [
     ], speed=0.7),
 ]
 
+# Make the primary human dynamic by turning it into a WalkingHuman
+# Primary human will patrol a small square around the default human location.
+try:
+    _hx = float(HUMAN_DEFAULT.get("x", 14))
+    _hy = float(HUMAN_DEFAULT.get("y", 7))
+except Exception:
+    _hx, _hy = 14.0, 7.0
+
+primary_human = WalkingHuman(
+    "Primary Human",
+    [
+        {"x": _hx, "y": _hy},
+        {"x": _hx + 2.0, "y": _hy},
+        {"x": _hx + 2.0, "y": _hy + 2.0},
+        {"x": _hx, "y": _hy + 2.0},
+    ],
+    speed=0.45,
+)
+
+# Append primary human to walking_humans so it is stepped and included in telemetry
+walking_humans.append(primary_human)
+
 # ---- Second robot (idle in loading bay, for visual realism) ----
 idle_robots: List[Dict[str, Any]] = [
     {"x": 34.0, "y": 20.0, "theta": 1.57, "speed": 0.0, "label": "R-02 (Idle)", "status": "idle"},
@@ -196,6 +218,13 @@ def _step() -> None:
     # Tick walking humans
     for wh in walking_humans:
         wh.step(dt)
+
+    # Update the primary human canonical position used elsewhere in the simulator
+    try:
+        human_pos["x"] = primary_human.pos["x"]
+        human_pos["y"] = primary_human.pos["y"]
+    except Exception:
+        pass
 
     target = state.get("target")
     if target:
