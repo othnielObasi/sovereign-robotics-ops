@@ -71,6 +71,12 @@ class ScenarioRequest(BaseModel):
 human_pos: Dict[str, float] = dict(HUMAN_DEFAULT)
 # Extra obstacles injected by scenarios
 extra_obstacles: List[Dict[str, float]] = []
+# Scenario lock: when a scenario (e.g. human_approach) is injected we hold the
+# primary human at the injected location for a short deterministic window so
+# governance reactions are reproducible. This avoids immediate override by
+# ambient walking behaviour.
+scenario_lock_until: float = 0.0
+SCENARIO_LOCK_SECS = 5.0
 
 # ---- Additional walking humans (ambient warehouse workers) ----
 # Each has a patrol path and walks between waypoints
@@ -221,8 +227,12 @@ def _step() -> None:
 
     # Update the primary human canonical position used elsewhere in the simulator
     try:
-        human_pos["x"] = primary_human.pos["x"]
-        human_pos["y"] = primary_human.pos["y"]
+        # Respect scenario lock: if a deterministic scenario was injected
+        # recently, keep the human at that injected location until the lock
+        # expires. Otherwise let the primary human patrol normally.
+        if time.time() > scenario_lock_until:
+            human_pos["x"] = primary_human.pos["x"]
+            human_pos["y"] = primary_human.pos["y"]
     except Exception:
         pass
 
@@ -285,9 +295,10 @@ def telemetry(request: Request):
         "human_conf": round(state["human_conf"], 3),
         "human_distance_m": round(state["human_distance_m"], 3),
         "events": state["events"],
-        # Enriched fields for Fix 1
-        "human": {"x": human_pos["x"], "y": human_pos["y"], "type": "unknown"},
-        "walking_humans": [wh.to_dict() for wh in walking_humans],
+        # Enriched fields
+        "human": {"x": human_pos["x"], "y": human_pos["y"], "type": "human", "id": "primary", "role": "primary"},
+        # Mark walking humans explicitly as workers; primary human is also present in this list
+        "walking_humans": [dict(wh.to_dict(), role="worker") for wh in walking_humans],
         "idle_robots": idle_robots,
         "obstacles": _all_obstacles(),
         "bounds": GEOFENCE,
@@ -347,7 +358,7 @@ def inject_scenario(request: Request, body: ScenarioRequest):
       - clear: Reset human & obstacles to defaults
     """
     _require_sim_token(request)
-    global human_pos, extra_obstacles
+    global human_pos, extra_obstacles, scenario_lock_until
 
     rx, ry = state["x"], state["y"]
     theta = state.get("theta", 0.0)
@@ -356,12 +367,16 @@ def inject_scenario(request: Request, body: ScenarioRequest):
         # Place human 2.5m ahead of robot
         human_pos["x"] = round(rx + 2.5 * math.cos(theta), 2)
         human_pos["y"] = round(ry + 2.5 * math.sin(theta), 2)
+        # Lock this injected position for a short deterministic window
+        scenario_lock_until = time.time() + SCENARIO_LOCK_SECS
         return {"ok": True, "scenario": "human_approach", "human": dict(human_pos)}
 
     elif body.scenario == "human_too_close":
         # Place human 0.8m ahead of robot
         human_pos["x"] = round(rx + 0.8 * math.cos(theta), 2)
         human_pos["y"] = round(ry + 0.8 * math.sin(theta), 2)
+        # Lock this injected position for a short deterministic window
+        scenario_lock_until = time.time() + SCENARIO_LOCK_SECS
         return {"ok": True, "scenario": "human_too_close", "human": dict(human_pos)}
 
     elif body.scenario == "path_blocked":
@@ -375,6 +390,8 @@ def inject_scenario(request: Request, body: ScenarioRequest):
         # Reset to defaults
         human_pos.update(HUMAN_DEFAULT)
         extra_obstacles.clear()
+        # Clear any scenario lock so ambient behaviour resumes
+        scenario_lock_until = 0.0
         return {"ok": True, "scenario": "clear"}
 
     else:

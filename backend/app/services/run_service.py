@@ -36,6 +36,12 @@ class RunService:
         self._ws_broadcast = None  # injected by WS manager
         self._plans: Dict[str, List[Dict[str, Any]]] = {}
 
+        # Diagnostics state per run
+        self._last_positions: Dict[str, tuple[float, float]] = {}
+        self._stagnant_counts: Dict[str, int] = {}
+        self.STAGNATION_THRESHOLD_M = 0.02  # movement below this counts as stagnant
+        self.STAGNATION_CYCLES = 10
+
         self.sim = SimAdapter()
         self.agent = AgentRouter()
         self.gov = GovernanceEngine()
@@ -207,6 +213,44 @@ class RunService:
                     # Store telemetry sample
                     self.tel.add_sample(db, run_id, telemetry)
 
+                    # --- Diagnostics: distance to goal & stagnation detection ---
+                    try:
+                        tx, ty = float(telemetry.get("x", 0.0)), float(telemetry.get("y", 0.0))
+                        gx, gy = float(goal.get("x", 0.0)), float(goal.get("y", 0.0))
+                        distance_to_goal = ((tx - gx) ** 2 + (ty - gy) ** 2) ** 0.5
+                    except Exception:
+                        distance_to_goal = None
+
+                    prev = self._last_positions.get(run_id)
+                    moved = None
+                    if prev:
+                        try:
+                            moved = ((tx - prev[0]) ** 2 + (ty - prev[1]) ** 2) ** 0.5
+                        except Exception:
+                            moved = None
+
+                    # Update stagnant counters
+                    if moved is None or moved < self.STAGNATION_THRESHOLD_M:
+                        self._stagnant_counts[run_id] = self._stagnant_counts.get(run_id, 0) + 1
+                    else:
+                        self._stagnant_counts[run_id] = 0
+                    self._last_positions[run_id] = (tx, ty)
+
+                    stagnant_cycles = self._stagnant_counts.get(run_id, 0)
+                    # Emit a STAGNATION event if we've been stagnant for too long
+                    if stagnant_cycles >= self.STAGNATION_CYCLES:
+                        try:
+                            st_payload = {
+                                "reason": "Robot movement below threshold",
+                                "stagnant_cycles": stagnant_cycles,
+                                "distance_to_goal": distance_to_goal,
+                            }
+                            self._append_event(db, run_id, "STAGNATION", st_payload)
+                            if self._ws_broadcast:
+                                await self._ws_broadcast(run_id, {"kind": "alert", "data": {"event": "STAGNATION", "payload": st_payload}})
+                        except Exception:
+                            pass
+
                     # Stream telemetry
                     if self._ws_broadcast:
                         await self._ws_broadcast(run_id, {"kind": "telemetry", "data": telemetry})
@@ -302,6 +346,9 @@ class RunService:
                                 },
                             })
 
+                        # Compute execution_reason for UI clarity
+                        execution_reason = "executed" if was_executed else f"blocked:{gov_decision.decision}"
+
                         await self._ws_broadcast(run_id, {
                             "kind": "event",
                             "data": {
@@ -310,6 +357,9 @@ class RunService:
                                 "governance": gov_payload,
                                 "execution": execution,
                                 "policy_state": gov_payload.get("policy_state", "SAFE"),
+                                "execution_reason": execution_reason,
+                                "distance_to_goal": distance_to_goal,
+                                "stagnant_cycles": stagnant_cycles,
                             }
                         })
 

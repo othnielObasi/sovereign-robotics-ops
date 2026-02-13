@@ -82,6 +82,7 @@ class ExecutionStep(BaseModel):
     executed: bool
     sim_result: Optional[Dict[str, Any]] = None
     telemetry_after: Optional[Dict[str, Any]] = None
+    movement_m: Optional[float] = None
 
 
 class ExecuteResponse(BaseModel):
@@ -289,6 +290,15 @@ async def execute_plan(body: ExecuteRequest):
                 step.telemetry_after = await _sim.get_telemetry()
             except Exception:
                 pass
+
+            # Compute movement displacement from pre->post telemetry for diagnostics
+            try:
+                if step.telemetry_after and telemetry and telemetry.get("x") is not None and telemetry.get("y") is not None:
+                    bx, by = float(telemetry.get("x", 0.0)), float(telemetry.get("y", 0.0))
+                    ax, ay = float(step.telemetry_after.get("x", 0.0)), float(step.telemetry_after.get("y", 0.0))
+                    step.movement_m = ((ax - bx) ** 2 + (ay - by) ** 2) ** 0.5
+            except Exception:
+                step.movement_m = None
 
             # If NEEDS_REVIEW, note it but continue
             if gov.decision == "NEEDS_REVIEW" and overall_status == "completed":

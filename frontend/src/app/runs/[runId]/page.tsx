@@ -105,6 +105,10 @@ export default function RunPage({ params }: { params: { runId: string } }) {
   const [liveThoughtChain, setLiveThoughtChain] = useState<any[]>([]);
   const [showReasoningDetails, setShowReasoningDetails] = useState<boolean>(false);
   const [hoveredWaypointIdx, setHoveredWaypointIdx] = useState<number | null>(null);
+  // Live diagnostics from runtime (populated from WS event messages)
+  const [executionReason, setExecutionReason] = useState<string | null>(null);
+  const [distanceToGoalLive, setDistanceToGoalLive] = useState<number | null>(null);
+  const [stagnantCyclesLive, setStagnantCyclesLive] = useState<number>(0);
 
   // AI Vision / Multimodal
   const [sceneResult, setSceneResult] = useState<any>(null);
@@ -186,6 +190,10 @@ export default function RunPage({ params }: { params: { runId: string } }) {
           // Extract policy_state from governance decision
           const ps = msg.data?.policy_state || msg.data?.governance?.policy_state;
           if (ps) setLivePolicyState(ps);
+          // New diagnostics fields added by RunService
+          if (msg.data?.execution_reason) setExecutionReason(msg.data.execution_reason);
+          if (msg.data?.distance_to_goal !== undefined) setDistanceToGoalLive(msg.data.distance_to_goal);
+          if (msg.data?.stagnant_cycles !== undefined) setStagnantCyclesLive(msg.data.stagnant_cycles || 0);
         }
         if (msg.kind === "status") setStatus(msg.data.status);
         if (msg.kind === "agent_reasoning") setLiveThoughtChain(msg.data?.steps || []);
@@ -459,6 +467,12 @@ export default function RunPage({ params }: { params: { runId: string } }) {
               Stop
             </button>
           )}
+          {/* Live diagnostics */}
+          <div className="text-xs text-slate-400 ml-3 flex items-center gap-3">
+            {executionReason && <span className="px-2 py-0.5 rounded bg-slate-700">{executionReason}</span>}
+            {distanceToGoalLive !== null && <span>Goal: {distanceToGoalLive.toFixed(2)}m</span>}
+            {stagnantCyclesLive > 0 && <span className="text-yellow-300">Stag: {stagnantCyclesLive}</span>}
+          </div>
         </div>
       </div>
 
