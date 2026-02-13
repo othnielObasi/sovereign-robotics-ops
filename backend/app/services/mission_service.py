@@ -137,6 +137,19 @@ class MissionService:
                 world = None
 
         if world is None:
+            # Fallback: try to read local sim/mock_sim/world.json from repository (useful in dev)
+            try:
+                from pathlib import Path
+
+                repo_root = Path(__file__).resolve().parents[4]
+                world_path = repo_root / "sim" / "mock_sim" / "world.json"
+                if world_path.exists():
+                    with world_path.open() as fh:
+                        world = json.load(fh)
+            except Exception:
+                world = None
+
+        if world is None:
             return {"x": x, "y": y}
 
         # Clamp to geofence if present
