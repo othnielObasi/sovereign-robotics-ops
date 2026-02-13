@@ -12,6 +12,7 @@ from app.db.models import Run, Event, Mission, TelemetrySample
 from app.schemas.run import RunOut, RunStartResponse
 from app.schemas.events import EventOut
 from app.services.run_service import RunService
+from app.services.gemini_planner import GeminiPlanner
 
 router = APIRouter()
 run_svc: RunService | None = None
@@ -51,7 +52,34 @@ async def start_run(
     if getattr(mission, "status", "draft") == "deleted":
         raise HTTPException(status_code=400, detail="Cannot start a deleted mission")
     svc = get_run_svc()
+
+    # Create run and launch loop
     run = svc.start_run(db, mission_id)
+
+    # Attempt to generate an initial LLM plan (GeminiPlanner) for audit and operator visibility.
+    # We do this synchronously from the start endpoint so every mission execution is seeded
+    # with an explicit planning proposal, regardless of agent runtime mode.
+    try:
+        telemetry = None
+        try:
+            telemetry = await svc.sim.get_telemetry()
+        except Exception:
+            telemetry = {}
+
+        planner = GeminiPlanner()
+        proposal = await planner.propose(telemetry, json.loads(mission.goal_json), mission.title)
+        plan_payload = {
+            "mission_id": mission.id,
+            "proposal": proposal.model_dump(),
+            "note": "Initial LLM plan generated at start()",
+        }
+        # Append plan event to chain-of-trust for the run
+        svc._append_event(db, run.id, "PLAN", plan_payload)
+        db.commit()
+    except Exception:
+        # Non-fatal: continue even if planner fails
+        db.rollback()
+
     # Mark mission as executing
     mission.status = "executing"
     db.commit()
