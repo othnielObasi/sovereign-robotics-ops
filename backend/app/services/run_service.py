@@ -137,6 +137,36 @@ class RunService:
         logger.info("Auto-resuming stale run loop for %s", run_id)
         self._launch_loop(run_id)
 
+    def rehydrate_plans(self, db: Session) -> None:
+        """Load persisted PLAN events from DB for runs and populate in-memory plans.
+
+        Expects a SQLAlchemy `Session` (this allows caller to control transactions).
+        """
+        try:
+            # Find runs that are currently running
+            runs = db.query(Run).filter(Run.status == "running").all()
+            for r in runs:
+                # Find most recent PLAN event for this run
+                plan_evt = (
+                    db.query(Event)
+                    .filter(Event.run_id == r.id)
+                    .filter(Event.type == "PLAN")
+                    .order_by(Event.ts.desc())
+                    .first()
+                )
+                if plan_evt:
+                    try:
+                        payload = json.loads(plan_evt.payload_json)
+                        plan = payload.get("plan") or {}
+                        waypoints = plan.get("waypoints") or []
+                        if waypoints:
+                            self._plans[r.id] = waypoints.copy()
+                            logger.info("Rehydrated plan for run %s (%d waypoints)", r.id, len(waypoints))
+                    except Exception:
+                        logger.warning("Failed to parse PLAN event for run %s", r.id)
+        except Exception as e:
+            logger.warning("rehydrate_plans failed: %s", e)
+
     async def stop_run(self, db: Session, run_id: str) -> None:
         if run_id in self._stop_flags:
             self._stop_flags[run_id].set()

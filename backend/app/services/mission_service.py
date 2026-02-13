@@ -44,8 +44,11 @@ class MissionService:
     # ── CRUD ─────────────────────────────────────────────────
 
     def create(self, db: Session, payload: MissionCreate) -> Mission:
-        # Normalize goal coords: clamp to geofence and snap to nearest bay if appropriate
-        goal = self._normalize_goal(payload.goal)
+        # Resolve bay_id if provided, otherwise normalize provided goal
+        if getattr(payload, "bay_id", None):
+            goal = self._resolve_bay_coords(payload.bay_id)
+        else:
+            goal = self._normalize_goal(payload.goal or {})
 
         m = Mission(
             id=new_id("mis"),
@@ -120,7 +123,16 @@ class MissionService:
                     # best-effort only; ignore any errors
                     pass
 
-        if payload.goal is not None:
+        # Handle explicit bay_id update (preferred) or explicit goal
+        if getattr(payload, "bay_id", None):
+            old_goal = json.loads(m.goal_json)
+            new_goal = self._resolve_bay_coords(payload.bay_id)
+            if new_goal != old_goal:
+                old_vals["goal"] = old_goal
+                new_vals["goal"] = new_goal
+                m.goal_json = json.dumps(new_goal, ensure_ascii=False)
+
+        elif payload.goal is not None:
             old_goal = json.loads(m.goal_json)
             new_goal = self._normalize_goal(payload.goal)
             if new_goal != old_goal:
@@ -227,6 +239,48 @@ class MissionService:
             x, y = best
 
         return {"x": x, "y": y}
+
+    def _resolve_bay_coords(self, bay_id: str) -> Dict[str, Any]:
+        """Resolve a bay ID to canonical coordinates using the world definition.
+
+        Best-effort: try backend sim proxy -> sim_base_url -> local world.json
+        """
+        try:
+            # Try fetching world similar to _normalize_goal
+            world = None
+            try:
+                backend_url = f"http://127.0.0.1:{settings.backend_port}/sim/world"
+                with httpx.Client(timeout=1.0) as client:
+                    r = client.get(backend_url)
+                    r.raise_for_status()
+                    world = r.json()
+            except Exception:
+                world = None
+            if world is None:
+                try:
+                    url = settings.sim_base_url.rstrip("/") + "/world"
+                    with httpx.Client(timeout=1.0) as client:
+                        r = client.get(url)
+                        r.raise_for_status()
+                        world = r.json()
+                except Exception:
+                    world = None
+            if world is None:
+                from pathlib import Path
+
+                repo_root = Path(__file__).resolve().parents[4]
+                world_path = repo_root / "sim" / "mock_sim" / "world.json"
+                if world_path.exists():
+                    with world_path.open() as fh:
+                        world = json.load(fh)
+            bays = (world or {}).get("bays") or []
+            for b in bays:
+                if str(b.get("id", "")).upper() == str(bay_id).upper():
+                    return {"x": float(b.get("x", 0)), "y": float(b.get("y", 0))}
+        except Exception:
+            pass
+        # Fallback: return origin
+        return {"x": 0.0, "y": 0.0}
 
     def set_status(
         self, db: Session, mission_id: str, new_status: str,

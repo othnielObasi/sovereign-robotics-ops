@@ -48,6 +48,21 @@ def evaluate_policies(telemetry: Dict[str, Any], proposal: ActionProposal) -> Go
     human_conf = float(telemetry.get("human_conf", 0.0))
     human_distance_m = float(telemetry.get("human_distance_m", 999.0))
 
+    # Consider walking humans (workers) separately if provided by telemetry
+    walking_humans = telemetry.get("walking_humans", []) or []
+    nearest_worker_dist = 999.0
+    nearest_worker_conf = 0.0
+    for wh in walking_humans:
+        try:
+            wd = float(wh.get("x", 0))
+            wd_y = float(wh.get("y", 0))
+            d = ((wd - x) ** 2 + (wd_y - y) ** 2) ** 0.5
+            if d < nearest_worker_dist:
+                nearest_worker_dist = d
+                nearest_worker_conf = float(wh.get("conf", 0.9))
+        except Exception:
+            continue
+
     intent = proposal.intent
     params = proposal.params or {}
     max_speed = float(params.get("max_speed", 0.0)) if intent == "MOVE_TO" else 0.0
@@ -78,22 +93,30 @@ def evaluate_policies(telemetry: Dict[str, Any], proposal: ActionProposal) -> Go
         risk_score = max(risk_score, 0.9)
         policy_state = "REPLAN"
 
-    # --- HUMAN_PROXIMITY_02 (distance-based, Fix 2) ---
-    if intent == "MOVE_TO" and human_detected and human_distance_m < HUMAN_STOP_RADIUS_M:
-        policy_hits.append("HUMAN_PROXIMITY_02")
+    # --- HUMAN / WORKER PROXIMITY ---
+    # Prefer worker (walking_humans) proximity if one is nearer; otherwise use primary human
+    use_worker = nearest_worker_dist < human_distance_m
+    prox_dist = nearest_worker_dist if use_worker else human_distance_m
+    prox_conf = nearest_worker_conf if use_worker else human_conf
+    prox_label = "worker" if use_worker else "human"
+
+    if intent == "MOVE_TO" and prox_dist < HUMAN_STOP_RADIUS_M:
+        policy_key = "WORKER_PROXIMITY_06" if use_worker else "HUMAN_PROXIMITY_02"
+        policy_hits.append(policy_key)
         reasons.append(
-            f"Human too close: {human_distance_m:.2f}m < stop radius {HUMAN_STOP_RADIUS_M:.1f}m. Full stop required."
+            f"{prox_label.capitalize()} too close: {prox_dist:.2f}m < stop radius {HUMAN_STOP_RADIUS_M:.1f}m. Full stop required."
         )
         required_action = "Full stop — human within safety perimeter."
         risk_score = max(risk_score, 0.95)
         policy_state = "STOP"
 
-    elif intent == "MOVE_TO" and human_detected and human_distance_m < HUMAN_SLOW_RADIUS_M:
-        policy_hits.append("HUMAN_PROXIMITY_02")
+    elif intent == "MOVE_TO" and prox_dist < HUMAN_SLOW_RADIUS_M:
+        policy_key = "WORKER_PROXIMITY_06" if use_worker else "HUMAN_PROXIMITY_02"
+        policy_hits.append(policy_key)
         reasons.append(
-            f"Human nearby: {human_distance_m:.2f}m < slow radius {HUMAN_SLOW_RADIUS_M:.1f}m. Reduce speed."
+            f"{prox_label.capitalize()} nearby: {prox_dist:.2f}m < slow radius {HUMAN_SLOW_RADIUS_M:.1f}m. Reduce speed."
         )
-        required_action = f"Reduce speed to <= {MAX_SPEED_NEAR_HUMAN:.2f} while human is within {HUMAN_SLOW_RADIUS_M:.1f}m."
+        required_action = f"Reduce speed to <= {MAX_SPEED_NEAR_HUMAN:.2f} while {prox_label} is within {HUMAN_SLOW_RADIUS_M:.1f}m."
         risk_score = max(risk_score, 0.80)
         if policy_state == "SAFE":
             policy_state = "SLOW"

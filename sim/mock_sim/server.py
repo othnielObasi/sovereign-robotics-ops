@@ -105,7 +105,7 @@ class WalkingHuman:
             self.pos["y"] += (dy / d) * step
 
     def to_dict(self) -> Dict[str, Any]:
-        return {"x": round(self.pos["x"], 2), "y": round(self.pos["y"], 2), "name": self.name}
+        return {"x": round(self.pos["x"], 2), "y": round(self.pos["y"], 2), "name": self.name, "type": "worker", "conf": 0.9}
 
 
 # Patrol routes that feel natural for a warehouse
@@ -257,7 +257,7 @@ def telemetry(request: Request):
         "human_distance_m": round(state["human_distance_m"], 3),
         "events": state["events"],
         # Enriched fields for Fix 1
-        "human": {"x": human_pos["x"], "y": human_pos["y"]},
+        "human": {"x": human_pos["x"], "y": human_pos["y"], "type": "unknown"},
         "walking_humans": [wh.to_dict() for wh in walking_humans],
         "idle_robots": idle_robots,
         "obstacles": _all_obstacles(),
