@@ -1,4 +1,4 @@
-use client
+"use client";
 
 import React, { useState, useEffect, useMemo, useRef } from 'react'
 import { Map2D } from '@/components/Map2D'
