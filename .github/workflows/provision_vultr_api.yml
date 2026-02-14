@@ -1,6 +1,8 @@
 name: Provision Vultr Instance & Deploy (API)
 
 on:
+  push:
+    branches: [ 'main' ]
   workflow_dispatch:
     inputs:
       region:
@@ -71,6 +73,7 @@ jobs:
 
       - name: Create Vultr instance
         id: create
+        if: ${{ github.event_name == 'workflow_dispatch' }}
         env:
           VULTR_API_KEY: ${{ secrets.VULTR_API_KEY }}
         run: |
@@ -101,6 +104,7 @@ jobs:
           echo "instance_id=$INSTANCE_ID" >> $GITHUB_OUTPUT
 
       - name: Poll for instance IPv4
+        if: ${{ github.event_name == 'workflow_dispatch' }}
         env:
           VULTR_API_KEY: ${{ secrets.VULTR_API_KEY }}
         run: |
