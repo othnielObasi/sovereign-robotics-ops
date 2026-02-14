@@ -34,40 +34,40 @@ jobs:
         run: |
           set -euo pipefail
           cat > userdata.sh <<'EOF'
-#!/bin/bash
-set -euo pipefail
+          #!/bin/bash
+          set -euo pipefail
 
-# write env file for app (do NOT echo secrets to logs)
-cat > /etc/sro/.env <<'EOV'
-GEMINI_API_KEY=${GEMINI_API_KEY}
-GEMINI_PROJECT_ID=${GEMINI_PROJECT_ID}
-JWT_SECRET=${JWT_SECRET}
-SIM_TOKEN=${SIM_TOKEN}
-DATABASE_URL=${DATABASE_URL}
-POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-EOV
+          # write env file for app (do NOT echo secrets to logs)
+          cat > /etc/sro/.env <<'EOV'
+          GEMINI_API_KEY=${GEMINI_API_KEY}
+          GEMINI_PROJECT_ID=${GEMINI_PROJECT_ID}
+          JWT_SECRET=${JWT_SECRET}
+          SIM_TOKEN=${SIM_TOKEN}
+          DATABASE_URL=${DATABASE_URL}
+          POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+          EOV
 
-chown root:root /etc/sro/.env
-chmod 600 /etc/sro/.env
+          chown root:root /etc/sro/.env
+          chmod 600 /etc/sro/.env
 
-# install docker & docker-compose if missing (idempotent)
-apt-get update -y
-apt-get install -y ca-certificates curl gnupg lsb-release
-mkdir -p /etc/apt/keyrings
-curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
-  > /etc/apt/sources.list.d/docker.list
-apt-get update -y
-apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+          # install docker & docker-compose if missing (idempotent)
+          apt-get update -y
+          apt-get install -y ca-certificates curl gnupg lsb-release
+          mkdir -p /etc/apt/keyrings
+          curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
+            > /etc/apt/sources.list.d/docker.list
+          apt-get update -y
+          apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
 
-# clone repo and start services
-if [ ! -d /opt/sovereign-robotics-ops ]; then
-  git clone https://github.com/othnielObasi/sovereign-robotics-ops.git /opt/sovereign-robotics-ops
-fi
-cd /opt/sovereign-robotics-ops
-docker compose -f docker-compose.vultr.yml --env-file /etc/sro/.env up -d --build
+          # clone repo and start services
+          if [ ! -d /opt/sovereign-robotics-ops ]; then
+            git clone https://github.com/othnielObasi/sovereign-robotics-ops.git /opt/sovereign-robotics-ops
+          fi
+          cd /opt/sovereign-robotics-ops
+          docker compose -f docker-compose.vultr.yml --env-file /etc/sro/.env up -d --build
 
-EOF
+          EOF
 
       - name: Create Vultr instance
         id: create
