@@ -1,0 +1,126 @@
+name: Provision Vultr Instance & Deploy (API)
+
+on:
+  workflow_dispatch:
+    inputs:
+      region:
+        description: 'Vultr region (e.g. ewr)'
+        required: false
+        default: 'ewr'
+      plan:
+        description: 'Vultr plan (e.g. vc2-1c-2gb)'
+        required: false
+        default: 'vc2-1c-2gb'
+      image:
+        description: 'Image slug (e.g. ubuntu-24-04-x64)'
+        required: false
+        default: 'ubuntu-24-04-x64'
+
+jobs:
+  create-and-provision:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare user-data script
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_PROJECT_ID: ${{ secrets.GEMINI_PROJECT_ID }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          SIM_TOKEN: ${{ secrets.SIM_TOKEN }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+        run: |
+          set -euo pipefail
+          cat > userdata.sh <<'EOF'
+#!/bin/bash
+set -euo pipefail
+
+# write env file for app (do NOT echo secrets to logs)
+cat > /etc/sro/.env <<'EOV'
+GEMINI_API_KEY=${GEMINI_API_KEY}
+GEMINI_PROJECT_ID=${GEMINI_PROJECT_ID}
+JWT_SECRET=${JWT_SECRET}
+SIM_TOKEN=${SIM_TOKEN}
+DATABASE_URL=${DATABASE_URL}
+POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+EOV
+
+chown root:root /etc/sro/.env
+chmod 600 /etc/sro/.env
+
+# install docker & docker-compose if missing (idempotent)
+apt-get update -y
+apt-get install -y ca-certificates curl gnupg lsb-release
+mkdir -p /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
+  > /etc/apt/sources.list.d/docker.list
+apt-get update -y
+apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+
+# clone repo and start services
+if [ ! -d /opt/sovereign-robotics-ops ]; then
+  git clone https://github.com/othnielObasi/sovereign-robotics-ops.git /opt/sovereign-robotics-ops
+fi
+cd /opt/sovereign-robotics-ops
+docker compose -f docker-compose.vultr.yml --env-file /etc/sro/.env up -d --build
+
+EOF
+
+      - name: Create Vultr instance
+        id: create
+        env:
+          VULTR_API_KEY: ${{ secrets.VULTR_API_KEY }}
+        run: |
+          set -euo pipefail
+          REGION='${{ github.event.inputs.region }}'
+          PLAN='${{ github.event.inputs.plan }}'
+          IMAGE='${{ github.event.inputs.image }}'
+
+          USERDATA=$(base64 -w0 userdata.sh)
+
+          echo "Creating instance (region=$REGION plan=$PLAN image=$IMAGE)"
+          # Call Vultr API. Note: some Vultr accounts use 'image' slug; if API requires os_id adjust accordingly.
+          CREATE_RESP=$(curl -s -X POST "https://api.vultr.com/v2/instances" \
+            -H "Authorization: Bearer $VULTR_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d '{"region":"'"$REGION"'","plan":"'"$PLAN"'","image":"'"$IMAGE"'","label":"sro-'"$(date +%s)"'","user_data":"'"$USERDATA"'"}')
+
+          echo "$CREATE_RESP" > create_resp.json
+          echo "Create response saved to create_resp.json"
+
+          INSTANCE_ID=$(jq -r '.instance.id // .id' create_resp.json)
+          if [ -z "$INSTANCE_ID" ] || [ "$INSTANCE_ID" = "null" ]; then
+            echo "Failed to create instance:" >&2
+            jq . create_resp.json >&2 || true
+            exit 1
+          fi
+          echo "Instance ID: $INSTANCE_ID"
+          echo "instance_id=$INSTANCE_ID" >> $GITHUB_OUTPUT
+
+      - name: Poll for instance IPv4
+        env:
+          VULTR_API_KEY: ${{ secrets.VULTR_API_KEY }}
+        run: |
+          set -euo pipefail
+          INSTANCE_ID=${{ steps.create.outputs.instance_id }}
+          echo "Polling for IPv4 of instance $INSTANCE_ID"
+          for i in {1..30}; do
+            sleep 10
+            INFO=$(curl -s -H "Authorization: Bearer $VULTR_API_KEY" "https://api.vultr.com/v2/instances/$INSTANCE_ID")
+            IPV4=$(echo "$INFO" | jq -r '.instance.main_ip // .main_ip // ""')
+            if [ -n "$IPV4" ] && [ "$IPV4" != "null" ]; then
+              echo "Instance IP: $IPV4"
+              echo "instance_ip=$IPV4" >> $GITHUB_OUTPUT
+              exit 0
+            fi
+            echo "Waiting for IP... ($i)"
+          done
+          echo "Timed out waiting for instance IP" >&2
+          exit 1
+
+      - name: Done
+        run: |
+          echo "Provisioning finished. Instance ID: ${{ steps.create.outputs.instance_id }} IP: ${{ steps.create.outputs.instance_ip }}"
