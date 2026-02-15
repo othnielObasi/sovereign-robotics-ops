@@ -51,6 +51,9 @@ sovereign-robotics-ops/
 └── .github/workflows/     # CI/CD pipelines
 ```
 
+Developer guide: See [docs/DEVELOPER.md](docs/DEVELOPER.md) for internal
+architecture, CI, and provisioning runbook.
+
 ## 🎮 Demo Scenarios
 
 The `/demo` page includes 4 interactive scenarios:
@@ -91,24 +94,33 @@ The `/demo` page includes 4 interactive scenarios:
 - `collision-risk`: Check path for obstacles
 - `battery-threshold`: Warn if battery < 20%
 
-## 🛠 Deployment
+## 🛠 Deployment (Vultr)
 
-### Fly.io (Backend)
+This project is packaged for deployment to a single Vultr VM per the hackathon requirements.
+
+Quick deploy (recommended for reviewers):
+
 ```bash
-fly auth login
-fly launch --config fly.toml
-fly secrets set DATABASE_URL="..."
-fly deploy
+# On the Vultr VM
+git clone <repo>
+cd sovereign-robotics-ops
+docker compose -f docker-compose.vultr.yml up --build -d
 ```
 
-### Vercel (Frontend)
-```bash
-cd frontend
-vercel --prod
-```
+Notes:
+- The `docker-compose.vultr.yml` file configures the frontend and backend services for a single VM deployment.
+- For serving large static assets (demo video), we recommend configuring a host webserver (nginx) as described in `DEPLOY_VULTR.md`.
+- Use PostgreSQL in production; local dev may use SQLite via the compose configuration.
 
-### Vultr (Hackathon Requirement)
-See `DEPLOY_VULTR.md` for VM deployment instructions.
+## 📦 Submission & Packaging
+
+We provide a convenience packaging script and guidance for reviewers and judges.
+
+- Use `scripts/package_submission.sh [path/to/sro_demo.mp4]` to create a release archive in `deploy/`.
+- The script includes `frontend/`, `backend/`, `docker-compose.vultr.yml`, and (optionally) the demo video.
+- See `deploy/README_SUBMISSION.md` for quick reviewer steps.
+
+Status: NVIDIA Brev + Isaac Sim credits have been claimed; Isaac Sim integration is planned but not included in this submission.
 
 ## 📋 Compliance Frameworks
 
