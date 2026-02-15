@@ -134,7 +134,7 @@ The platform supports multiple compliance frameworks:
 
 **Sovereign AI Labs**
 
-- Othniel Agera - Founder & CEO
+- Othniel Obasi - Founder & CEO
 
 
 ## 📄 License
