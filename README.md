@@ -135,9 +135,7 @@ The platform supports multiple compliance frameworks:
 **Sovereign AI Labs**
 
 - Othniel Agera - Founder & CEO
-  - 10+ years AI product management
-  - MSc Applied AI & Data Science
-  - DeepLearning.AI Red Team Certified
+
 
 ## 📄 License
 
