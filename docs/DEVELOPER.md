@@ -1,7 +1,6 @@
 # Developer Guide (internal)
 
-This document is the developer handbook for Sovereign Robotics Ops (previously
-`copilot-instructions.md`). It contains architecture details, run lifecycle,
+This document is the developer handbook for Sovereign Robotics Ops. It contains architecture details, run lifecycle,
 deployment and CI instructions, and guidance for maintainers and automation.
 
 ## Project Overview
