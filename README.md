@@ -1,4 +1,4 @@
-# Sovereign Robotics Ops
+# Sovereign AI Robotics Ops
 
 > **Track 1: Autonomous Robotics Control in Simulation**
 > 
