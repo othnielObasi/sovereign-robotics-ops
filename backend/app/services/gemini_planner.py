@@ -44,12 +44,13 @@ def bay_directory_text(bays: List[Dict[str, Any]]) -> str:
 
 _JSON_RE = re.compile(r"(\{.*\}|\[.*\])", re.DOTALL)
 
-# Model cascade: robotics-er (primary) → flash variants → deterministic fallback
+# Model cascade: robotics-er (primary) → pro/flash variants → deterministic fallback
 MODEL_CASCADE: List[str] = [
     "gemini-robotics-er-1.5-preview",  # Primary: robotics-specialized
-    "gemini-2.5-flash",                # Fallback 1: fast, good quota
-    "gemini-2.5-flash-lite",           # Fallback 2: lightweight, high quota
-    "gemini-3-flash-preview",          # Fallback 3: next-gen flash
+    "gemini-3-pro-preview",            # Fallback 1: Gemini 3 Pro
+    "gemini-3-flash-preview",          # Fallback 2: Gemini 3 Flash
+    "gemini-2.5-flash",                # Fallback 3: fast, good quota
+    "gemini-2.5-flash-lite",           # Fallback 4: lightweight, high quota
 ]
 
 
