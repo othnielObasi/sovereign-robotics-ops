@@ -27,10 +27,10 @@ fi
 
 # ---- Create .env file ----
 cat > "$APP_DIR/.env" <<ENVFILE
-GEMINI_API_KEY=AIzaSyACCEq4ODWv85ISP_uNFMyCYCzLG3lQj0A
-GEMINI_PROJECT_ID=gen-lang-client-0517520000
-JWT_SECRET=vultr-sro-jwt-secret-2026-hackathon
-SIM_TOKEN=vultr-sro-sim-token-2026-hackathon
+GEMINI_API_KEY=${GEMINI_API_KEY:?Set GEMINI_API_KEY before running deploy}
+GEMINI_PROJECT_ID=${GEMINI_PROJECT_ID:-gen-lang-client-0517520000}
+JWT_SECRET=${JWT_SECRET:-$(openssl rand -hex 32)}
+SIM_TOKEN=${SIM_TOKEN:-$(openssl rand -hex 16)}
 NEXT_PUBLIC_API_BASE=
 ENVFILE
 
