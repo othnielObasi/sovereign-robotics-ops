@@ -1,4 +1,4 @@
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "";
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "/api";
 
 /** Retry wrapper – retries on network failures (TypeError: Failed to fetch) */
 async function fetchWithRetry(

@@ -7,7 +7,7 @@ import { listMissions, createMission, startRun, listRuns } from "@/lib/api";
 import type { Mission, MissionStatus } from "@/lib/types";
 
 // API configuration
-const API_URL = process.env.NEXT_PUBLIC_API_BASE || "";
+const API_URL = process.env.NEXT_PUBLIC_API_BASE || "/api";
 
 interface SystemStatus {
   api: 'connected' | 'disconnected' | 'checking';
