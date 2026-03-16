@@ -382,6 +382,60 @@ docker compose -f docker-compose.vultr.yml up -d frontend
 
 ---
 
+### Issue 7: Simulator unreachable — "Cannot reach simulator"
+
+**Symptom:** Backend logs show `Cannot reach simulator` errors. Runs start but robot doesn't move. Sim telemetry returns empty or errors.
+
+**Cause:** Three problems:
+1. The `sim` container's Dockerfile (`sim/mock_sim/Dockerfile`) has **no CMD or ENTRYPOINT** — without an explicit `command:` in docker-compose, the container starts and immediately exits.
+2. `SIM_BASE_URL` was not set in docker-compose, so the backend defaulted to `http://127.0.0.1:8090` — unreachable from inside the Docker network.
+3. `depends_on` was backwards — sim depended on backend instead of backend depending on sim.
+
+**Fix:**
+- Added `command: uvicorn server:app --host 0.0.0.0 --port 8090` to the `sim` service in `docker-compose.vultr.yml`.
+- Added `SIM_BASE_URL: "http://sim:8090"` to the backend environment — uses Docker's internal DNS.
+- Fixed `depends_on` so backend depends on `[db, sim]`.
+- Removed public port mapping for sim (no need to expose 8090 to the internet).
+
+---
+
+### Issue 8: Gemini API key revoked — LLM falls back to deterministic
+
+**Symptom:** Planning always returns `"rationale": "[Fallback] Deterministic 2-waypoint plan."` and `"model_used": "deterministic_fallback"` instead of using Gemini.
+
+**Cause:** The Gemini API key was hardcoded in `deploy/vultr-deploy.sh` and committed to the public GitHub repo. Google detected the leak and revoked it — API returns `403 PERMISSION_DENIED: "Your API key was reported as leaked"`.
+
+**Fix:**
+1. Removed the hardcoded key from `deploy/vultr-deploy.sh` — now requires `GEMINI_API_KEY` env var.
+2. Generated a new API key at [Google AI Studio](https://aistudio.google.com/apikey).
+3. Set the new key in `/opt/sovereign-robotics-ops/.env` on the VM.
+4. Restarted the backend: `docker compose -f docker-compose.vultr.yml restart backend`.
+
+**Prevention:** Never commit API keys to source code. Use `.env` files (gitignored) or secret management.
+
+---
+
+### Issue 9: Old GTC paper URL (`http://104.238.128.128:3000/`) unreachable
+
+**Symptom:** The GTC paper references the old URL `http://104.238.128.128:3000/`. After migration, Docker binds the frontend to `127.0.0.1:3000` only, so the old URL doesn't work.
+
+**Cause:** Nginx only listens on ports 80/443. Port 3000 on the *public* IP has nothing listening.
+
+**Fix:** Added an Nginx server block that listens on the public IP's port 3000 and 301-redirects to the new domain:
+
+```nginx
+# In /etc/nginx/sites-available/sovereignroboticsops.nov-tia.com
+server {
+    listen 104.238.128.128:3000;
+    server_name _;
+    return 301 https://sovereignroboticsops.nov-tia.com$request_uri;
+}
+```
+
+Key detail: `listen 104.238.128.128:3000` (public IP only) — Docker keeps `127.0.0.1:3000` for internal traffic. Paths are preserved, so `/missions` redirects to `https://sovereignroboticsops.nov-tia.com/missions`.
+
+---
+
 ## Quick Reference Commands
 
 ```bash
