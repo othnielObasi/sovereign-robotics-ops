@@ -42,3 +42,23 @@ def test_policy(payload: Dict[str, Any]):
     proposal_raw = payload.get("proposal") or {}
     proposal = ActionProposal(**proposal_raw)
     return evaluate_policies(telemetry, proposal)
+
+
+@router.post("/governance/evaluate", response_model=GovernanceDecision)
+def governance_evaluate(payload: Dict[str, Any]):
+    """Evaluate an AI-generated action against the governance policy layer.
+
+    This is the primary governance API endpoint referenced in the
+    Sovereign Robotics Ops architecture.  Every AI-planned action is
+    intercepted here before execution.
+
+    Expected JSON:
+    {
+      "telemetry": {"x":..., "y":..., "speed":..., "zone":..., ...},
+      "proposal": {"intent":"MOVE_TO", "params":{...}, "rationale":"..."}
+    }
+    """
+    telemetry = payload.get("telemetry") or {}
+    proposal_raw = payload.get("proposal") or {}
+    proposal = ActionProposal(**proposal_raw)
+    return evaluate_policies(telemetry, proposal)

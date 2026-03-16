@@ -254,3 +254,33 @@ export async function getAllAudit(limit = 100, offset = 0) {
   if (!r.ok) throw new Error(await parseErrorResponse(r, "Failed to get audit trail"));
   return r.json();
 }
+
+// ---- Compliance ----
+
+export async function getComplianceReport(runId: string, framework = "ISO_42001") {
+  const r = await fetchWithRetry(`${API_BASE}/compliance/report/${runId}?framework=${encodeURIComponent(framework)}`, { cache: "no-store" });
+  if (!r.ok) throw new Error(await parseErrorResponse(r, "Failed to get compliance report"));
+  return r.json();
+}
+
+export async function getComplianceFrameworks() {
+  const r = await fetchWithRetry(`${API_BASE}/compliance/frameworks`, { cache: "no-store" });
+  if (!r.ok) throw new Error(await parseErrorResponse(r, "Failed to get frameworks"));
+  return r.json();
+}
+
+export async function verifyAuditChain(runId: string) {
+  const r = await fetchWithRetry(`${API_BASE}/compliance/verify/${runId}`, { cache: "no-store" });
+  if (!r.ok) throw new Error(await parseErrorResponse(r, "Failed to verify audit chain"));
+  return r.json();
+}
+
+export async function evaluateGovernance(telemetry: any, proposal: any) {
+  const r = await fetchWithRetry(`${API_BASE}/governance/evaluate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ telemetry, proposal }),
+  });
+  if (!r.ok) throw new Error(await parseErrorResponse(r, "Governance evaluation failed"));
+  return r.json();
+}
