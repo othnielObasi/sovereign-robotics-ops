@@ -18,7 +18,9 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    # Do NOT expose 8080:8080 to the public
+    # Do NOT expose 8080:8080 to the public — bind to localhost only for Nginx
+    ports:
+      - "127.0.0.1:8080:8080"
     environment:
       DATABASE_URL: "postgresql://sro:sro_production_2026@db:5432/sro"
       CORS_ORIGINS: "https://sovereignroboticsops.nov-tia.com,http://sovereignroboticsops.nov-tia.com,http://localhost:3000"
