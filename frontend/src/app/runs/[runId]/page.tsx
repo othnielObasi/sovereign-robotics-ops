@@ -5,6 +5,7 @@ import { getRun, listEvents, stopRun, getWorld, getTelemetry, getPathPreview, tr
 import { Map2D } from "@/components/Map2D";
 import { wsUrlForRun } from "@/lib/ws";
 import type { WsMessage } from "@/lib/types";
+import Link from "next/link";
 
 /* ── Bay resolver (matches backend resolve_bay_from_instruction) ── */
 const BAY_PATTERN = /\b([BSR])-?(\d{1,2})\b/i;
@@ -446,9 +447,17 @@ export default function RunPage({ params }: { params: { runId: string } }) {
 
   return (
     <div className="max-w-[1400px] mx-auto px-4 py-4 space-y-3">
+      {/* Scenario toast notification (floating) */}
+      {scenarioToast && (
+        <div className="fixed top-20 right-4 z-50 bg-slate-800/95 border border-cyan-500/40 rounded-xl px-4 py-3 shadow-lg shadow-black/30 backdrop-blur animate-slide-in max-w-xs">
+          <div className="text-sm text-cyan-300 font-medium">{scenarioToast}</div>
+        </div>
+      )}
+
       {/* ── Compact Header ── */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
+          <Link href="/runs" className="text-slate-500 hover:text-cyan-400 transition text-sm">← Runs</Link>
           <h1 className="text-lg font-bold text-white">
             <span className="text-cyan-400 font-mono">{runId.slice(0, 12)}</span>
           </h1>
@@ -500,23 +509,22 @@ export default function RunPage({ params }: { params: { runId: string } }) {
                   Trail
                 </label>
               </div>
-              {/* Scenario triggers inline */}
-              <div className="flex items-center gap-1">
-                {scenarioToast && <span className="text-[10px] text-cyan-300 animate-pulse mr-2">{scenarioToast}</span>}
+              {/* Scenario triggers */}
+              <div className="flex items-center gap-1.5">
                 {([
-                  { key: "human_approach", label: "🚶", cls: "border-yellow-500/40 text-yellow-400 hover:bg-yellow-500/20" },
-                  { key: "human_too_close", label: "🛑", cls: "border-red-500/40 text-red-400 hover:bg-red-500/20" },
-                  { key: "path_blocked", label: "🚧", cls: "border-blue-500/40 text-blue-400 hover:bg-blue-500/20" },
-                  { key: "clear", label: "✅", cls: "border-green-500/40 text-green-400 hover:bg-green-500/20" },
+                  { key: "human_approach", icon: "🚶", label: "Human Near", cls: "border-yellow-500/40 text-yellow-400 hover:bg-yellow-500/20" },
+                  { key: "human_too_close", icon: "🛑", label: "Too Close", cls: "border-red-500/40 text-red-400 hover:bg-red-500/20" },
+                  { key: "path_blocked", icon: "🚧", label: "Blocked", cls: "border-blue-500/40 text-blue-400 hover:bg-blue-500/20" },
+                  { key: "clear", icon: "✅", label: "Clear", cls: "border-green-500/40 text-green-400 hover:bg-green-500/20" },
                 ] as const).map((s) => (
                   <button
                     key={s.key}
                     onClick={() => onScenario(s.key)}
                     disabled={!!scenarioLoading || currentStatus === "stopped"}
                     title={s.key.replace(/_/g, " ")}
-                    className={`border rounded-md px-1.5 py-1 text-xs transition disabled:opacity-30 relative ${s.cls} ${scenarioLoading === s.key ? "animate-pulse" : ""} ${scenarioLoading === s.key ? `scenario-active-ring ${s.key === "human_approach" ? "ring-yellow" : s.key === "human_too_close" ? "ring-red" : s.key === "path_blocked" ? "ring-blue" : "ring-green"}` : ""}`}
+                    className={`border rounded-lg px-2.5 py-1.5 text-[11px] font-medium transition disabled:opacity-30 relative flex items-center gap-1 ${s.cls} ${scenarioLoading === s.key ? "animate-pulse scenario-active-ring" : ""} ${scenarioLoading === s.key ? (s.key === "human_approach" ? "ring-yellow" : s.key === "human_too_close" ? "ring-red" : s.key === "path_blocked" ? "ring-blue" : "ring-green") : ""}`}
                   >
-                    {s.label}
+                    <span>{s.icon}</span><span className="hidden sm:inline">{s.label}</span>
                   </button>
                 ))}
               </div>
@@ -524,7 +532,16 @@ export default function RunPage({ params }: { params: { runId: string } }) {
             <div className="min-h-[450px]">
               <Map2D world={world} telemetry={telemetry} pathPoints={pathPoints} planWaypoints={llmPlan?.waypoints || null} missionGoal={resolveBayGoal(missionInstruction, world?.bays || []) || mission?.goal || null} showHeatmap={showHeatmap} showTrail={showTrail} safetyState={safety.state} hoveredWaypointIdx={hoveredWaypointIdx} />
             </div>
-            <p className="text-[10px] text-slate-600 mt-1">Scroll to zoom · Drag to pan · Cyan: robot · Red: obstacles · Orange: human · Purple: plan</p>
+            {/* Map Legend */}
+            <div className="flex items-center gap-3 mt-2 px-1 flex-wrap">
+              <span className="flex items-center gap-1 text-[10px] text-slate-400"><span className="w-2.5 h-2.5 rounded-full bg-cyan-400 inline-block" /> Robot</span>
+              <span className="flex items-center gap-1 text-[10px] text-slate-400"><span className="w-2.5 h-2.5 rounded-sm bg-red-500 inline-block" /> Obstacles</span>
+              <span className="flex items-center gap-1 text-[10px] text-slate-400"><span className="w-2.5 h-2.5 rounded-full bg-amber-400 inline-block" /> Human</span>
+              <span className="flex items-center gap-1 text-[10px] text-slate-400"><span className="w-2.5 h-2.5 rounded-full bg-purple-400 inline-block" /> Plan</span>
+              <span className="flex items-center gap-1 text-[10px] text-slate-400"><span className="w-2.5 h-2.5 rounded-full bg-emerald-400 inline-block" /> Goal</span>
+              <span className="flex items-center gap-1 text-[10px] text-slate-400"><span className="w-2.5 h-2.5 rounded-full bg-blue-400 inline-block" /> Path</span>
+              <span className="text-[10px] text-slate-600 ml-auto">Scroll to zoom · Drag to pan</span>
+            </div>
           </Card>
 
           {/* ── Unified AI Mission Planner ── */}
@@ -631,7 +648,39 @@ export default function RunPage({ params }: { params: { runId: string } }) {
               </button>
             </div>
 
-            {missionError && <div className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg p-2 mb-2">{missionError}</div>}
+            {missionError && (
+              <div className="flex items-start gap-2 bg-red-500/15 border-l-4 border-red-500 rounded-lg p-3 mb-3 animate-slide-up">
+                <span className="text-red-400 text-lg">⚠️</span>
+                <div>
+                  <div className="text-sm font-semibold text-red-400">Pipeline Error</div>
+                  <div className="text-xs text-red-300/80 mt-0.5">{missionError}</div>
+                </div>
+              </div>
+            )}
+
+            {/* Loading skeleton for reasoning stage */}
+            {pipelineStage === "reasoning" && liveThoughtChain.length === 0 && (
+              <div className="space-y-2 mb-3 animate-pulse">
+                <div className="h-3 bg-purple-500/20 rounded w-1/3" />
+                <div className="bg-slate-900/60 border border-purple-500/10 rounded-lg p-3 space-y-2">
+                  <div className="h-2 bg-slate-700 rounded w-2/3" />
+                  <div className="h-2 bg-slate-700 rounded w-1/2" />
+                  <div className="h-2 bg-slate-700 rounded w-3/4" />
+                  <div className="flex items-center gap-2"><span className="text-xs text-purple-400 animate-pulse">🧠 Reasoning...</span></div>
+                </div>
+              </div>
+            )}
+
+            {/* Loading skeleton for planning stage */}
+            {pipelineStage === "planning" && !llmPlan && (
+              <div className="space-y-2 mb-3 animate-pulse">
+                <div className="h-3 bg-purple-500/20 rounded w-1/4" />
+                <div className="flex gap-1">
+                  {[1,2,3,4].map(i => <div key={i} className="h-6 w-16 bg-slate-700 rounded" />)}
+                </div>
+                <div className="flex items-center gap-2"><span className="text-xs text-purple-400 animate-pulse">🗺️ Generating waypoints...</span></div>
+              </div>
+            )}
 
             {/* Live reasoning spinner */}
             {pipelineStage === "reasoning" && liveThoughtChain.length > 0 && (
@@ -867,11 +916,20 @@ export default function RunPage({ params }: { params: { runId: string } }) {
             {!lastDecision ? (
               <div className="text-slate-500 text-xs text-center py-3">⏳ Awaiting first decision…</div>
             ) : (
-              <div className="space-y-2 text-xs">
+              <div className={`space-y-2 text-xs rounded-lg p-3 -mx-1 ${
+                lastDecision.governance?.decision === "APPROVED" ? "animate-glow-green" :
+                lastDecision.governance?.decision === "DENIED" ? "animate-glow-red" :
+                lastDecision.governance?.decision === "NEEDS_REVIEW" ? "animate-glow-yellow" : ""
+              }`}>
                 <div className="flex items-center justify-between">
-                  <span className={`font-bold text-sm ${
-                    lastDecision.governance?.decision === "APPROVED" ? "text-green-400" : lastDecision.governance?.decision === "DENIED" ? "text-red-400" : "text-yellow-400"
-                  }`}>{lastDecision.governance?.decision || "—"}</span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-lg">
+                      {lastDecision.governance?.decision === "APPROVED" ? "✅" : lastDecision.governance?.decision === "DENIED" ? "❌" : "⚠️"}
+                    </span>
+                    <span className={`font-bold text-lg ${
+                      lastDecision.governance?.decision === "APPROVED" ? "text-green-400" : lastDecision.governance?.decision === "DENIED" ? "text-red-400" : "text-yellow-400"
+                    }`}>{lastDecision.governance?.decision || "—"}</span>
+                  </div>
                   <span className="text-slate-400">Risk: {lastDecision.governance?.risk_score != null ? (lastDecision.governance.risk_score * 100).toFixed(0) + "%" : "—"}</span>
                 </div>
                 <div className="flex items-center gap-2">
@@ -995,7 +1053,7 @@ export default function RunPage({ params }: { params: { runId: string } }) {
       </div>
 
       {/* ── AI Intelligence Console (tabbed, below main layout) ── */}
-      <CollapsibleCard title="AI Intelligence Console" defaultOpen={false}>
+      <CollapsibleCard title="🧠 AI Intelligence Console — Scene Analysis, Telemetry Insights & Failure Detection" defaultOpen={true}>
         <div className="flex gap-1 mb-3">
           {(["scene", "telemetry", "failure"] as const).map((tab) => (
             <button key={tab} onClick={() => setAiTab(tab)}

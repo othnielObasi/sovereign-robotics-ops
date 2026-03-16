@@ -396,11 +396,17 @@ function MetricCard({
   sub: string;
   color?: string;
 }) {
+  const bgMap: Record<string, string> = {
+    "text-green-400": "bg-green-500/10 border-green-500/20",
+    "text-red-400": "bg-red-500/10 border-red-500/20",
+    "text-white": "bg-slate-700/40 border-slate-700",
+  };
+  const bg = bgMap[color] || bgMap["text-white"];
   return (
-    <div className="bg-slate-700/40 rounded-lg p-4">
-      <div className="text-xs text-slate-400 uppercase tracking-wider">{label}</div>
-      <div className={`text-2xl font-bold mt-1 ${color}`}>{value}</div>
-      <div className="text-xs text-slate-500 mt-0.5">{sub}</div>
+    <div className={`rounded-xl p-5 border ${bg}`}>
+      <div className="text-xs text-slate-400 uppercase tracking-wider font-medium">{label}</div>
+      <div className={`text-4xl font-bold mt-2 ${color}`}>{value}</div>
+      <div className="text-sm text-slate-500 mt-1">{sub}</div>
     </div>
   );
 }
