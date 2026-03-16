@@ -697,12 +697,35 @@ export default function RunPage({ params }: { params: { runId: string } }) {
             {agenticResult && (
               <div className="space-y-2 mb-3">
                 <div className="text-[10px] uppercase tracking-wide text-slate-500 font-semibold">Reasoning</div>
-                {agenticResult.replanning_used && (
-                  <div className="flex items-center gap-2 text-[10px] bg-amber-500/10 border border-amber-500/20 rounded px-2 py-1 animate-slide-up">
-                    <span>🔄</span><span className="text-amber-300 font-semibold">Replanned after policy denial</span>
-                    {lastDenialPolicy && <span className="text-amber-400/70 font-mono">({lastDenialPolicy})</span>}
-                  </div>
-                )}
+                {agenticResult.replanning_used && (() => {
+                  const replanSteps = (agenticResult.thought_chain || []).filter((s: any) => s.action === "replan");
+                  return (
+                    <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-2 space-y-1.5 animate-slide-up">
+                      <div className="flex items-center gap-2 text-[10px]">
+                        <span>🔄</span>
+                        <span className="text-amber-300 font-semibold">Replanned {replanSteps.length}× after policy denial</span>
+                        {lastDenialPolicy && <span className="text-amber-400/70 font-mono">({lastDenialPolicy})</span>}
+                      </div>
+                      {replanSteps.map((rs: any, i: number) => {
+                        const policyMatch = rs.thought?.match(/Policies?:\s*([A-Z_0-9,\s]+?)(?:\.|$)/i);
+                        const reasonMatch = rs.thought?.match(/Reasons?:\s*(.+?)(?:\.\s*Risk|$)/i);
+                        const riskMatch = rs.thought?.match(/Risk:\s*([\d.]+)/);
+                        const stateMatch = rs.thought?.match(/State:\s*(\w+)/);
+                        return (
+                          <div key={i} className="bg-slate-950/60 border border-amber-500/15 rounded p-2 space-y-1 text-[10px] font-mono">
+                            <div className="flex items-center gap-2">
+                              <span className="px-1.5 py-0.5 rounded bg-red-500/20 text-red-300 font-semibold">Attempt {i + 1} denied</span>
+                              {stateMatch && <span className="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300">{stateMatch[1]}</span>}
+                              {riskMatch && <span className="text-red-400">Risk: {(parseFloat(riskMatch[1]) * 100).toFixed(0)}%</span>}
+                            </div>
+                            {policyMatch && <div className="text-amber-400">Policies: {policyMatch[1].trim()}</div>}
+                            {reasonMatch && <div className="text-slate-400">{reasonMatch[1].trim()}</div>}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
 
                 {/* Compact structured reasoning + confidence (collapsible details) */}
                 <div className="bg-slate-900/60 border border-purple-500/20 rounded-lg p-3 space-y-1.5 text-xs font-mono">
@@ -757,14 +780,20 @@ export default function RunPage({ params }: { params: { runId: string } }) {
                   {showReasoningDetails && (
                     <div className="mt-2">
                       <div className="bg-slate-950/60 border border-slate-700/50 rounded p-2 space-y-1">
-                        {(agenticResult.thought_chain || []).filter((s: any) => s.action && s.action !== "replan").map((s: any, i: number) => {
-                          const isOk = !s.observation?.toLowerCase().includes("denied") && !s.observation?.toLowerCase().includes("violation");
+                        {(agenticResult.thought_chain || []).filter((s: any) => s.action).map((s: any, i: number) => {
+                          const isReplan = s.action === "replan";
+                          const isOk = !isReplan && !s.observation?.toLowerCase().includes("denied") && !s.observation?.toLowerCase().includes("violation");
                           return (
-                            <div key={i} className="flex items-center gap-2 text-[10px] font-mono">
-                              <span className={`px-1.5 py-0.5 rounded ${s.action === "submit_action" ? "bg-green-500/20 text-green-300" : s.action === "check_policy" ? "bg-cyan-500/20 text-cyan-300" : "bg-slate-700 text-slate-300"}`}>{s.action}</span>
+                            <div key={i} className={`flex items-center gap-2 text-[10px] font-mono ${isReplan ? "bg-amber-500/10 border border-amber-500/20 rounded px-1 py-0.5" : ""}`}>
+                              <span className={`px-1.5 py-0.5 rounded ${
+                                isReplan ? "bg-amber-500/20 text-amber-300" :
+                                s.action === "submit_action" ? "bg-green-500/20 text-green-300" :
+                                s.action === "check_policy" ? "bg-cyan-500/20 text-cyan-300" :
+                                "bg-slate-700 text-slate-300"
+                              }`}>{s.action}</span>
                               <span className="text-slate-600">→</span>
-                              <span className={isOk ? "text-green-400" : "text-amber-400"}>{isOk ? "OK" : "⚠ violation"}</span>
-                              {s.thought && <span className="text-slate-500 truncate max-w-[200px]">{s.thought}</span>}
+                              <span className={isReplan ? "text-amber-400" : isOk ? "text-green-400" : "text-amber-400"}>{isReplan ? "⟳ replanning" : isOk ? "OK" : "⚠ violation"}</span>
+                              {s.thought && <span className={`truncate max-w-[300px] ${isReplan ? "text-amber-400/70" : "text-slate-500"}`}>{s.thought}</span>}
                             </div>
                           );
                         })}
