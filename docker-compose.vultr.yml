@@ -21,7 +21,7 @@ services:
     # Do NOT expose 8080:8080 to the public
     environment:
       DATABASE_URL: "postgresql://sro:sro_production_2026@postgres:5432/sro"
-      CORS_ORIGINS: "http://104.238.128.128,http://104.238.128.128:3000,http://104.238.128.128:80,http://localhost:3000"
+      CORS_ORIGINS: "https://sovereignroboticsops.nov-tia.com,http://sovereignroboticsops.nov-tia.com,http://localhost:3000"
       GEMINI_API_KEY: "${GEMINI_API_KEY}"
       GEMINI_PROJECT_ID: "${GEMINI_PROJECT_ID}"
       GEMINI_ENABLED: "true"
@@ -37,7 +37,7 @@ services:
   db:
     image: postgres:16
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     environment:
       POSTGRES_USER: sro
       POSTGRES_PASSWORD: sro_production_2026

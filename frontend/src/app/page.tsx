@@ -7,7 +7,7 @@ import { listMissions, createMission, startRun, listRuns } from "@/lib/api";
 import type { Mission, MissionStatus } from "@/lib/types";
 
 // API configuration
-const API_URL = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8080";
+const API_URL = process.env.NEXT_PUBLIC_API_BASE || "";
 
 interface SystemStatus {
   api: 'connected' | 'disconnected' | 'checking';
@@ -172,7 +172,7 @@ export default function HomePage() {
             {status.api === 'connected' ? '✅ Connected' :
              status.api === 'checking' ? '⏳ Checking...' : '❌ Disconnected'}
           </div>
-          <p className="text-xs text-slate-500 mt-1">{API_URL || 'localhost'}</p>
+          <p className="text-xs text-slate-500 mt-1">{API_URL || '(same origin)'}</p>
         </div>
 
         {/* Gemini Status */}
