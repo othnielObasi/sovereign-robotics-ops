@@ -36,6 +36,7 @@ class Settings(BaseSettings):
     jwt_audience: str = "sro-ui"
     access_token_expire_minutes: int = 720
     jwt_algorithm: str = "HS256"
+    auth_required: bool = False  # Set True to enforce JWT on all endpoints
 
     # ------------------------------------------------------------
     # Simulator Connection
