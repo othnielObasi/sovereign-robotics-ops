@@ -29,8 +29,10 @@ services:
       GEMINI_ENABLED: "true"
       JWT_SECRET: "${JWT_SECRET}"
       SIM_TOKEN: "${SIM_TOKEN}"
+      SIM_BASE_URL: "http://sim:8090"
     depends_on:
       - db
+      - sim
     volumes:
       - backend_data:/app/data
     command: >
@@ -50,12 +52,11 @@ services:
     build:
       context: ./sim/mock_sim
       dockerfile: Dockerfile
-    ports:
-      - "8090:8090"
     environment:
-      SIM_BASE_URL: "http://mock-sim:8090"
-    depends_on:
-      - backend
+      SIM_TICK_HZ: "10"
+    command: >
+      uvicorn server:app --host 0.0.0.0 --port 8090
+    restart: always
 
 volumes:
   postgres_data:
