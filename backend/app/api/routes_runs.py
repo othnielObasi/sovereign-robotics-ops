@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -14,6 +16,8 @@ from app.schemas.events import EventOut
 from app.services.run_service import RunService
 from app.services.gemini_planner import GeminiPlanner
 from app.config import settings
+
+logger = logging.getLogger("app.routes_runs")
 
 router = APIRouter()
 run_svc: RunService | None = None
@@ -41,6 +45,45 @@ async def start_run_legacy(
     return await start_run(body.mission_id, db)
 
 
+async def _generate_plan_background(svc: RunService, run_id: str, mission_id: str, mission_title: str, goal_json: str):
+    """Background task: generate LLM plan and attach to run.
+
+    Runs after the HTTP response has already been returned so the user
+    isn't blocked waiting for LLM cascading.
+    """
+    from app.db.session import SessionLocal
+    db = SessionLocal()
+    try:
+        telemetry = None
+        try:
+            telemetry = await svc.sim.get_telemetry()
+        except Exception:
+            telemetry = {}
+
+        planner = GeminiPlanner()
+        plan = await planner.generate_plan(telemetry, mission_title, json.loads(goal_json))
+        if plan and plan.get("waypoints"):
+            svc._plans[run_id] = plan.get("waypoints")
+            plan_payload = {
+                "mission_id": mission_id,
+                "plan": plan,
+                "note": "Initial LLM multi-waypoint plan generated (background)",
+            }
+            svc._append_event(db, run_id, "PLAN", plan_payload)
+            db.commit()
+            logger.info(f"LLM plan attached to run {run_id}")
+        else:
+            logger.warning(f"LLM plan generation returned empty for run {run_id}")
+    except Exception as exc:
+        logger.warning(f"Background LLM plan generation failed for run {run_id}: {exc}")
+        try:
+            db.rollback()
+        except Exception:
+            pass
+    finally:
+        db.close()
+
+
 @router.post("/missions/{mission_id}/start", response_model=RunStartResponse)
 async def start_run(
     mission_id: str,
@@ -57,44 +100,11 @@ async def start_run(
     # Create run and launch loop
     run = svc.start_run(db, mission_id)
 
-    # Attempt to generate an initial LLM plan (GeminiPlanner) for execution.
-    # If successful, attach plan waypoints to the RunService so the runtime
-    # loop will follow them; also append PLAN event for audit.
-    try:
-        telemetry = None
-        try:
-            telemetry = await svc.sim.get_telemetry()
-        except Exception:
-            telemetry = {}
-
-        planner = GeminiPlanner()
-        # Use the planner's generate_plan API to obtain multi-waypoint plan
-        plan = await planner.generate_plan(telemetry, mission.title, json.loads(mission.goal_json))
-        if plan and plan.get("waypoints"):
-            # Attach plan waypoints to run service in-memory store
-            svc._plans[run.id] = plan.get("waypoints")
-            plan_payload = {
-                "mission_id": mission.id,
-                "plan": plan,
-                "note": "Initial LLM multi-waypoint plan generated at start()",
-            }
-            svc._append_event(db, run.id, "PLAN", plan_payload)
-            db.commit()
-        else:
-            # If configuration requires an LLM plan at run start, enforce it.
-            if settings.llm_enabled and getattr(settings, "require_llm_plan_at_start", False):
-                # stop the run we just started and surface error
-                try:
-                    await svc.stop_run(db, run.id)
-                except Exception:
-                    pass
-                raise HTTPException(status_code=503, detail="LLM plan required at start but generation failed")
-    except Exception:
-        # Non-fatal: continue even if planner fails
-        try:
-            db.rollback()
-        except Exception:
-            pass
+    # Fire-and-forget: generate LLM plan in background so this response
+    # returns immediately.  The plan will be attached to the run once ready.
+    asyncio.create_task(
+        _generate_plan_background(svc, run.id, mission.id, mission.title, mission.goal_json)
+    )
 
     # Mark mission as executing
     mission.status = "executing"

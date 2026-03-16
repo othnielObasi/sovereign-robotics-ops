@@ -68,7 +68,7 @@ class Settings(BaseSettings):
     gemini_api_key: Optional[str] = None
     gemini_project_id: Optional[str] = None
     gemini_model: str = "gemini-robotics-er-1.5-preview"
-    gemini_timeout_s: float = 30.0
+    gemini_timeout_s: float = 10.0
     gemini_enabled: bool = False
 
     # ------------------------------------------------------------
