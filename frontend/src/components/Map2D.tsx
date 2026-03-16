@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 function clamp(v: number, a: number, b: number) {
   return Math.max(a, Math.min(b, v));
@@ -67,8 +67,12 @@ export function Map2D({
   hoveredWaypointIdx?: number | null;
 }) {
   const ref = useRef<HTMLCanvasElement | null>(null);
-  const W = 600,
-    H = 380;
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const minimapRef = useRef<HTMLCanvasElement | null>(null);
+  const [size, setSize] = useState({ w: 600, h: 380 });
+  const W = size.w;
+  const H = size.h;
+  const [isFullscreen, setIsFullscreen] = useState(false);
 
   const geo = world?.geofence ?? { min_x: 0, max_x: 40, min_y: 0, max_y: 25 };
   const zones: any[] = world?.zones ?? [];
@@ -82,14 +86,14 @@ export function Map2D({
     const wx = (geo.max_x - geo.min_x) || 1;
     const wy = (geo.max_y - geo.min_y) || 1;
     return Math.min((W - 40) / wx, (H - 40) / wy);
-  }, [geo]);
+  }, [geo, W, H]);
 
   const pad = useMemo(
     () => ({
       x: (W - (geo.max_x - geo.min_x) * baseScale) / 2,
       y: (H - (geo.max_y - geo.min_y) * baseScale) / 2,
     }),
-    [baseScale, geo],
+    [baseScale, geo, W, H],
   );
 
   const [zoom, setZoom] = useState(1);
@@ -99,6 +103,39 @@ export function Map2D({
   const dragging = useRef(false);
   const lastMouse = useRef<Pt | null>(null);
   const trailRef = useRef<Pt[]>([]);
+
+  /* ── ResizeObserver: track container size ──────────────────── */
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver((entries) => {
+      for (const e of entries) {
+        const { width, height } = e.contentRect;
+        if (width > 0 && height > 0) {
+          setSize({ w: Math.round(width), h: Math.round(height) });
+        }
+      }
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  /* ── Fullscreen toggle ─────────────────────────────────────── */
+  const toggleFullscreen = useCallback(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    if (!document.fullscreenElement) {
+      el.requestFullscreen().catch(() => {});
+    } else {
+      document.exitFullscreen().catch(() => {});
+    }
+  }, []);
+
+  useEffect(() => {
+    const handler = () => setIsFullscreen(!!document.fullscreenElement);
+    document.addEventListener("fullscreenchange", handler);
+    return () => document.removeEventListener("fullscreenchange", handler);
+  }, []);
 
   /* pulse timer */
   useEffect(() => {
@@ -221,10 +258,15 @@ export function Map2D({
         ctx.fillRect(tl.x, tl.y, zw, zh);
       }
       ctx.fillStyle = C.zoneLabel;
-      ctx.font = `bold ${Math.max(10, 12 * zoom)}px system-ui`;
+      ctx.font = `bold ${Math.max(14, 18 * zoom)}px system-ui`;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.fillText(z.name.toUpperCase().replace("_", " "), tl.x + zw / 2, tl.y + zh / 2);
+      const zoneText = z.name.toUpperCase().replace("_", " ");
+      /* text outline for readability */
+      ctx.strokeStyle = "rgba(0,0,0,0.5)";
+      ctx.lineWidth = 3;
+      ctx.strokeText(zoneText, tl.x + zw / 2, tl.y + zh / 2);
+      ctx.fillText(zoneText, tl.x + zw / 2, tl.y + zh / 2);
     }
 
     /* ── warehouse bays (docks & shelves) ───────────────────── */
@@ -986,15 +1028,108 @@ export function Map2D({
       ctx.textBaseline = "top";
       ctx.fillText(it.label, lx + 12, y);
     });
-  }, [world, telemetry, pathPoints, planWaypoints, baseScale, zoom, pan, showHeatmap, showTrail, safetyState, tick, pad, zones, obstacles, human, walkingHumans, idleRobots, bays, geo]);
+  }, [world, telemetry, pathPoints, planWaypoints, baseScale, zoom, pan, showHeatmap, showTrail, safetyState, tick, pad, zones, obstacles, human, walkingHumans, idleRobots, bays, geo, W, H]);
+
+  /* ── Minimap (when zoomed > 1.5x) ─────────────────────────── */
+  useEffect(() => {
+    if (zoom <= 1.5) return;
+    const mc = minimapRef.current;
+    if (!mc) return;
+    const mctx = mc.getContext("2d");
+    if (!mctx) return;
+    const MW = 140, MH = 90;
+    mc.width = MW;
+    mc.height = MH;
+
+    const mScale = Math.min((MW - 8) / ((geo.max_x - geo.min_x) || 1), (MH - 8) / ((geo.max_y - geo.min_y) || 1));
+    const mPad = { x: (MW - (geo.max_x - geo.min_x) * mScale) / 2, y: (MH - (geo.max_y - geo.min_y) * mScale) / 2 };
+
+    function mw2c(p: Pt) {
+      return { x: mPad.x + (p.x - geo.min_x) * mScale, y: MH - mPad.y - (p.y - geo.min_y) * mScale };
+    }
+
+    /* bg */
+    mctx.fillStyle = "rgba(15,23,42,0.85)";
+    mctx.fillRect(0, 0, MW, MH);
+
+    /* geofence outline */
+    const g0 = mw2c({ x: geo.min_x, y: geo.max_y });
+    const g1 = mw2c({ x: geo.max_x, y: geo.min_y });
+    mctx.strokeStyle = "#475569";
+    mctx.lineWidth = 1;
+    mctx.strokeRect(g0.x, g0.y, g1.x - g0.x, g1.y - g0.y);
+
+    /* obstacles */
+    for (const ob of obstacles) {
+      const p = mw2c({ x: +ob.x, y: +ob.y });
+      mctx.fillStyle = "#ef4444";
+      mctx.fillRect(p.x - 2, p.y - 2, 4, 4);
+    }
+
+    /* human */
+    if (human && typeof human.x === "number") {
+      const p = mw2c({ x: +human.x, y: +human.y });
+      mctx.fillStyle = "#f59e0b";
+      mctx.beginPath();
+      mctx.arc(p.x, p.y, 3, 0, Math.PI * 2);
+      mctx.fill();
+    }
+
+    /* robot */
+    if (telemetry) {
+      const p = mw2c({ x: +(telemetry.x ?? 0), y: +(telemetry.y ?? 0) });
+      mctx.fillStyle = "#06b6d4";
+      mctx.beginPath();
+      mctx.arc(p.x, p.y, 3, 0, Math.PI * 2);
+      mctx.fill();
+    }
+
+    /* viewport rectangle */
+    const viewTL = { x: -pan.x / zoom, y: -pan.y / zoom };
+    const viewBR = { x: (W - pan.x) / zoom, y: (H - pan.y) / zoom };
+    /* convert from canvas-space back to world-space */
+    function cs2w(sx: number, sy: number) {
+      return { x: (sx - pad.x) / baseScale + geo.min_x, y: (H - pad.y - sy) / baseScale + geo.min_y };
+    }
+    const wTL = cs2w(viewTL.x, viewTL.y);
+    const wBR = cs2w(viewBR.x, viewBR.y);
+    const vp0 = mw2c({ x: wTL.x, y: wTL.y });
+    const vp1 = mw2c({ x: wBR.x, y: wBR.y });
+    mctx.strokeStyle = "rgba(6,182,212,0.7)";
+    mctx.lineWidth = 1.5;
+    mctx.strokeRect(Math.min(vp0.x, vp1.x), Math.min(vp0.y, vp1.y), Math.abs(vp1.x - vp0.x), Math.abs(vp1.y - vp0.y));
+  }, [zoom, pan, telemetry, obstacles, human, geo, W, H, pad, baseScale]);
 
   return (
-    <canvas
-      ref={ref}
-      width={W}
-      height={H}
-      style={{ width: "100%", borderRadius: 12, touchAction: "none", background: C.floor }}
-      className="border border-slate-700"
-    />
+    <div
+      ref={containerRef}
+      className="relative w-full border border-slate-700"
+      style={{ minHeight: 300, height: isFullscreen ? "100vh" : "100%", borderRadius: 12, overflow: "hidden", background: C.floor }}
+    >
+      <canvas
+        ref={ref}
+        width={W}
+        height={H}
+        style={{ width: "100%", height: "100%", touchAction: "none", display: "block" }}
+      />
+      {/* Fullscreen toggle */}
+      <button
+        onClick={toggleFullscreen}
+        className="absolute top-2 right-2 bg-slate-800/80 hover:bg-slate-700 text-slate-300 rounded-md px-2 py-1 text-xs backdrop-blur-sm transition-colors"
+        title={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
+      >
+        {isFullscreen ? "⛶ Exit" : "⛶ Fullscreen"}
+      </button>
+      {/* Minimap overlay when zoomed */}
+      {zoom > 1.5 && (
+        <canvas
+          ref={minimapRef}
+          width={140}
+          height={90}
+          className="absolute bottom-2 left-2 border border-slate-600 rounded"
+          style={{ background: "rgba(15,23,42,0.85)" }}
+        />
+      )}
+    </div>
   );
 }
