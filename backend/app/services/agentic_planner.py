@@ -327,18 +327,10 @@ Keep each thought under 30 words. ALWAYS check_policy before submit_action.
         for replan_attempt in range(self.MAX_REPLANS + 1):
             prompt = self._build_system_prompt(telemetry, goal, nl_task, world, denial_feedback)
 
-            # Call LLM
-            result_text = None
-            # Prefer Flash for speed in demos; fall back through cascade
-            agent_cascade = ["gemini-2.5-flash"] + [
-                m for m in self._llm._get_cascade() if m != "gemini-2.5-flash"
-            ]
-            for model in agent_cascade:
-                logger.info(f"[Agentic] Trying {model} (attempt {replan_attempt + 1})")
-                result_text = await self._llm._call_gemini(model, prompt)
-                if result_text:
-                    model_used = model
-                    break
+            # Race top models concurrently for speed
+            agent_cascade = self._llm._get_cascade(fast=True)
+            logger.info(f"[Agentic] Racing {len(agent_cascade)} models (attempt {replan_attempt + 1})")
+            result_text, model_used = await self._llm._race_models(agent_cascade, prompt)
 
             if not result_text:
                 logger.warning("[Agentic] All models failed, falling back to deterministic")

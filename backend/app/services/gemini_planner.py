@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
+import time as _time
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -44,13 +46,21 @@ def bay_directory_text(bays: List[Dict[str, Any]]) -> str:
 
 _JSON_RE = re.compile(r"(\{.*\}|\[.*\])", re.DOTALL)
 
-# Model cascade: robotics-er (primary) → pro/flash variants → deterministic fallback
+# Model cascade: flash first (fastest) → robotics-er → heavier models
 MODEL_CASCADE: List[str] = [
-    "gemini-robotics-er-1.5-preview",  # Primary: robotics-specialized
-    "gemini-3-pro-preview",            # Fallback 1: Gemini 3 Pro
-    "gemini-3-flash-preview",          # Fallback 2: Gemini 3 Flash
-    "gemini-2.5-flash",                # Fallback 3: fast, good quota
-    "gemini-2.5-flash-lite",           # Fallback 4: lightweight, high quota
+    "gemini-2.5-flash",                # Fastest, best quota
+    "gemini-2.0-flash",                # Ultra-fast fallback
+    "gemini-robotics-er-1.5-preview",  # Robotics-specialized
+    "gemini-2.5-flash-lite",           # Lightweight, high quota
+    "gemini-3-flash-preview",          # Gemini 3 Flash
+    "gemini-3-pro-preview",            # Gemini 3 Pro (slowest)
+]
+
+# Shorter cascade for latency-sensitive paths (agentic propose, single-call)
+FAST_CASCADE: List[str] = [
+    "gemini-2.5-flash",
+    "gemini-2.0-flash",
+    "gemini-2.5-flash-lite",
 ]
 
 
@@ -62,28 +72,50 @@ def _extract_json(text: str) -> Any:
     return json.loads(m.group(1))
 
 
+# Shared httpx client — reuse connections across calls
+_shared_client: Optional[httpx.AsyncClient] = None
+
+
+def _get_shared_client(timeout: float) -> httpx.AsyncClient:
+    global _shared_client
+    if _shared_client is None or _shared_client.is_closed:
+        _shared_client = httpx.AsyncClient(
+            timeout=timeout,
+            limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
+        )
+    return _shared_client
+
+
 class GeminiPlanner:
-    """LLM planner with cascading model fallback for reliability."""
+    """LLM planner with cascading model fallback and concurrent racing."""
 
     def __init__(self):
         self.api_key = settings.gemini_api_key
         self.primary_model = settings.gemini_model
-        self.timeout_s = settings.gemini_timeout_s
+        self.timeout_s = min(settings.gemini_timeout_s, 6.0)  # Cap at 6s for speed
         self.model_cascade = [self.primary_model] + [
             m for m in MODEL_CASCADE if m != self.primary_model
         ]
+        # Deduplicate while preserving order
+        seen = set()
+        deduped = []
+        for m in self.model_cascade:
+            if m not in seen:
+                seen.add(m)
+                deduped.append(m)
+        self.model_cascade = deduped
         self._bays: List[Dict[str, Any]] = []
 
     def set_bays(self, bays: List[Dict[str, Any]]) -> None:
         """Load bay directory for coordinate resolution."""
         self._bays = bays or []
 
-    def _get_cascade(self, preferred_model: Optional[str] = None) -> List[str]:
-        """Return model cascade starting from preferred_model, preserving fallback order."""
+    def _get_cascade(self, preferred_model: Optional[str] = None, fast: bool = False) -> List[str]:
+        """Return model cascade. Use fast=True for latency-sensitive paths."""
+        base = FAST_CASCADE if fast else self.model_cascade
         if not preferred_model or preferred_model not in MODEL_CASCADE:
-            return self.model_cascade
-        # Start from the preferred model, then continue with remaining in cascade order
-        remaining = [m for m in self.model_cascade if m != preferred_model]
+            return base
+        remaining = [m for m in base if m != preferred_model]
         return [preferred_model] + remaining
 
     async def _call_gemini(self, model: str, prompt: str) -> Optional[str]:
@@ -93,20 +125,62 @@ class GeminiPlanner:
             "contents": [{"parts": [{"text": prompt}]}],
             "generationConfig": {"temperature": 0.2},
         }
+        t0 = _time.monotonic()
         try:
-            async with httpx.AsyncClient(timeout=self.timeout_s) as client:
-                r = await client.post(url, headers=headers, json=payload)
-                if r.status_code == 429:
-                    logger.warning(f"Rate limited on {model}")
-                    return None
-                if r.status_code >= 400:
-                    logger.warning(f"Error {r.status_code} on {model}: {r.text[:200]}")
-                    return None
-                data = r.json()
-                return data["candidates"][0]["content"]["parts"][0].get("text", "")
+            client = _get_shared_client(self.timeout_s)
+            r = await client.post(url, headers=headers, json=payload)
+            elapsed = _time.monotonic() - t0
+            if r.status_code == 429:
+                logger.warning(f"Rate limited on {model} ({elapsed:.1f}s)")
+                return None
+            if r.status_code >= 400:
+                logger.warning(f"Error {r.status_code} on {model} ({elapsed:.1f}s): {r.text[:200]}")
+                return None
+            data = r.json()
+            text = data["candidates"][0]["content"]["parts"][0].get("text", "")
+            logger.info(f"Gemini {model} responded in {elapsed:.1f}s")
+            return text
         except Exception as e:
-            logger.warning(f"Exception calling {model}: {e}")
+            elapsed = _time.monotonic() - t0
+            logger.warning(f"Exception calling {model} ({elapsed:.1f}s): {e}")
             return None
+
+    async def _race_models(self, models: List[str], prompt: str) -> tuple[Optional[str], str]:
+        """Race multiple models concurrently — return first successful response."""
+        if not models:
+            return None, "none"
+
+        async def _try(model: str) -> tuple[Optional[str], str]:
+            result = await self._call_gemini(model, prompt)
+            return result, model
+
+        tasks = [asyncio.create_task(_try(m)) for m in models[:2]]  # Race top 2
+        done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+
+        # Check if winner succeeded
+        for task in done:
+            text, model = task.result()
+            if text:
+                for p in pending:
+                    p.cancel()
+                return text, model
+
+        # Winner failed — wait for runner-up
+        for task in pending:
+            try:
+                text, model = await task
+                if text:
+                    return text, model
+            except asyncio.CancelledError:
+                pass
+
+        # Both failed — try remaining models sequentially
+        for model in models[2:]:
+            text = await self._call_gemini(model, prompt)
+            if text:
+                return text, model
+
+        return None, "none"
 
     # ---- Deterministic fallbacks ----
 
@@ -147,23 +221,22 @@ GOAL: {json.dumps(goal)}
 
 Output STRICT JSON: {{"intent":"MOVE_TO|STOP|WAIT","params":{{...}},"rationale":"..."}}
 """
-        for model in self._get_cascade(preferred_model):
-            logger.info(f"Trying model: {model}")
-            text = await self._call_gemini(model, prompt)
-            if text:
-                try:
-                    obj = _extract_json(text)
-                    proposal = ActionProposal(**obj)
-                    if proposal.intent == "MOVE_TO":
-                        p = proposal.params or {}
-                        p["x"] = float(p.get("x", goal.get("x", 0)))
-                        p["y"] = float(p.get("y", goal.get("y", 0)))
-                        p["max_speed"] = max(0.1, min(1.0, float(p.get("max_speed", 0.5))))
-                        proposal.params = p
-                    proposal.rationale = f"[{model}] {proposal.rationale}"
-                    return proposal
-                except Exception as e:
-                    logger.warning(f"Parse failed {model}: {e}")
+        cascade = self._get_cascade(preferred_model, fast=True)
+        text, model = await self._race_models(cascade, prompt)
+        if text:
+            try:
+                obj = _extract_json(text)
+                proposal = ActionProposal(**obj)
+                if proposal.intent == "MOVE_TO":
+                    p = proposal.params or {}
+                    p["x"] = float(p.get("x", goal.get("x", 0)))
+                    p["y"] = float(p.get("y", goal.get("y", 0)))
+                    p["max_speed"] = max(0.1, min(1.0, float(p.get("max_speed", 0.5))))
+                    proposal.params = p
+                proposal.rationale = f"[{model}] {proposal.rationale}"
+                return proposal
+            except Exception as e:
+                logger.warning(f"Parse failed {model}: {e}")
         return self._deterministic_proposal(telemetry, goal)
 
     async def generate_plan(self, telemetry: Dict[str, Any], instruction: str,
@@ -189,34 +262,33 @@ IMPORTANT: When the instruction mentions a bay ID (e.g. B-03, S-01, R-02), use t
 Output STRICT JSON:
 {{"waypoints": [{{"x": <float>, "y": <float>, "max_speed": <float>}}, ...], "rationale": "...", "estimated_time_s": <float>}}
 """
-        for model in self._get_cascade(preferred_model):
-            logger.info(f"Trying plan model: {model}")
-            text = await self._call_gemini(model, prompt)
-            if text:
-                try:
-                    obj = _extract_json(text)
-                    waypoints = obj.get("waypoints", [])
-                    for wp in waypoints:
-                        wp["x"] = max(0.0, min(40.0, float(wp.get("x", 0))))
-                        wp["y"] = max(0.0, min(25.0, float(wp.get("y", 0))))
-                        wp["max_speed"] = max(0.1, min(1.0, float(wp.get("max_speed", 0.5))))
-                    # Ensure last waypoint matches the goal (snap to bay coords)
-                    if goal and waypoints:
-                        gx, gy = float(goal.get("x", 0)), float(goal.get("y", 0))
-                        last = waypoints[-1]
-                        if abs(last["x"] - gx) > 1.0 or abs(last["y"] - gy) > 1.0:
-                            waypoints.append({"x": gx, "y": gy, "max_speed": last["max_speed"]})
-                    elif goal and not waypoints:
-                        gx, gy = float(goal.get("x", 0)), float(goal.get("y", 0))
-                        waypoints = [{"x": gx, "y": gy, "max_speed": 0.4}]
-                    return {
-                        "waypoints": waypoints,
-                        "rationale": f"[{model}] {obj.get('rationale', '')}",
-                        "estimated_time_s": float(obj.get("estimated_time_s", 0)),
-                        "model_used": model,
-                    }
-                except Exception as e:
-                    logger.warning(f"Plan parse failed {model}: {e}")
+        cascade = self._get_cascade(preferred_model, fast=True)
+        text, model = await self._race_models(cascade, prompt)
+        if text:
+            try:
+                obj = _extract_json(text)
+                waypoints = obj.get("waypoints", [])
+                for wp in waypoints:
+                    wp["x"] = max(0.0, min(40.0, float(wp.get("x", 0))))
+                    wp["y"] = max(0.0, min(25.0, float(wp.get("y", 0))))
+                    wp["max_speed"] = max(0.1, min(1.0, float(wp.get("max_speed", 0.5))))
+                # Ensure last waypoint matches the goal (snap to bay coords)
+                if goal and waypoints:
+                    gx, gy = float(goal.get("x", 0)), float(goal.get("y", 0))
+                    last = waypoints[-1]
+                    if abs(last["x"] - gx) > 1.0 or abs(last["y"] - gy) > 1.0:
+                        waypoints.append({"x": gx, "y": gy, "max_speed": last["max_speed"]})
+                elif goal and not waypoints:
+                    gx, gy = float(goal.get("x", 0)), float(goal.get("y", 0))
+                    waypoints = [{"x": gx, "y": gy, "max_speed": 0.4}]
+                return {
+                    "waypoints": waypoints,
+                    "rationale": f"[{model}] {obj.get('rationale', '')}",
+                    "estimated_time_s": float(obj.get("estimated_time_s", 0)),
+                    "model_used": model,
+                }
+            except Exception as e:
+                logger.warning(f"Plan parse failed {model}: {e}")
         return self._deterministic_plan(telemetry, goal)
 
     # ---- Deterministic analysis fallbacks ----
@@ -335,16 +407,15 @@ Output STRICT JSON:
   "compliance_notes": ["<note 1>"]
 }}
 """
-        for model in self._get_cascade(preferred_model):
-            logger.info(f"Trying analyze model: {model}")
-            text = await self._call_gemini(model, prompt)
-            if text:
-                try:
-                    obj = _extract_json(text)
-                    obj["model_used"] = model
-                    return obj
-                except Exception as e:
-                    logger.warning(f"Analysis parse failed {model}: {e}")
+        cascade = self._get_cascade(preferred_model, fast=True)
+        text, model = await self._race_models(cascade, prompt)
+        if text:
+            try:
+                obj = _extract_json(text)
+                obj["model_used"] = model
+                return obj
+            except Exception as e:
+                logger.warning(f"Analysis parse failed {model}: {e}")
         return self._deterministic_analysis(events)
 
     # ---- NEW: Multimodal scene analysis ----
@@ -375,16 +446,15 @@ Output STRICT JSON:
   "reasoning": "..."
 }}
 """
-        for model in self._get_cascade(preferred_model):
-            logger.info(f"Trying scene model: {model}")
-            text = await self._call_gemini(model, prompt)
-            if text:
-                try:
-                    obj = _extract_json(text)
-                    obj["model_used"] = model
-                    return obj
-                except Exception as e:
-                    logger.warning(f"Scene parse failed {model}: {e}")
+        cascade = self._get_cascade(preferred_model, fast=True)
+        text, model = await self._race_models(cascade, prompt)
+        if text:
+            try:
+                obj = _extract_json(text)
+                obj["model_used"] = model
+                return obj
+            except Exception as e:
+                logger.warning(f"Scene parse failed {model}: {e}")
         return self._deterministic_scene(scene_description)
 
     # ---- NEW: Failure detection & adaptation ----
@@ -418,14 +488,13 @@ Output STRICT JSON:
   "health_status": "<OK|WARNING|CRITICAL>"
 }}
 """
-        for model in self._get_cascade(preferred_model):
-            logger.info(f"Trying failure-detection model: {model}")
-            text = await self._call_gemini(model, prompt)
-            if text:
-                try:
-                    obj = _extract_json(text)
-                    obj["model_used"] = model
-                    return obj
-                except Exception as e:
-                    logger.warning(f"Failure parse failed {model}: {e}")
+        cascade = self._get_cascade(preferred_model, fast=True)
+        text, model = await self._race_models(cascade, prompt)
+        if text:
+            try:
+                obj = _extract_json(text)
+                obj["model_used"] = model
+                return obj
+            except Exception as e:
+                logger.warning(f"Failure parse failed {model}: {e}")
         return self._deterministic_failure(events, telemetry)
