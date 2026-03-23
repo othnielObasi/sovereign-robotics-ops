@@ -18,21 +18,15 @@ jobs:
           printf '%s' "${{ secrets.SSH_PRIVATE_KEY }}" > /tmp/vultr_key
           chmod 600 /tmp/vultr_key
 
-      - name: Write env file to VM
+      - name: Validate VM env file exists
         env:
           VM_IP: ${{ secrets.VM_IP }}
           VM_USER: ${{ secrets.VM_USER }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          GEMINI_PROJECT_ID: ${{ secrets.GEMINI_PROJECT_ID }}
-          JWT_SECRET: ${{ secrets.JWT_SECRET }}
-          SIM_TOKEN: ${{ secrets.SIM_TOKEN }}
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
         run: |
           set -euo pipefail
-          printf "GEMINI_API_KEY=%s\nGEMINI_PROJECT_ID=%s\nJWT_SECRET=%s\nSIM_TOKEN=%s\nDATABASE_URL=%s\nPOSTGRES_PASSWORD=%s\n" \
-            "$GEMINI_API_KEY" "$GEMINI_PROJECT_ID" "$JWT_SECRET" "$SIM_TOKEN" "$DATABASE_URL" "$POSTGRES_PASSWORD" \
-            | ssh -o StrictHostKeyChecking=no -i /tmp/vultr_key $VM_USER@$VM_IP 'sudo mkdir -p /etc/sro && sudo tee /etc/sro/.env > /dev/null && sudo chown root:root /etc/sro/.env && sudo chmod 600 /etc/sro/.env'
+          ssh -o StrictHostKeyChecking=no -i /tmp/vultr_key $VM_USER@$VM_IP '
+            test -f /etc/sro/.env
+          '
 
       - name: Deploy / restart services on VM
         env:
