@@ -53,10 +53,9 @@ jobs:
       - name: Health check
         env:
           VM_IP: ${{ secrets.VM_IP }}
+          VM_USER: ${{ secrets.VM_USER }}
         run: |
           set -euo pipefail
           sleep 5
-          if ! curl -fsS http://$VM_IP/health ; then
-            echo "Health check failed" >&2
-            exit 1
-          fi
+          ssh -o StrictHostKeyChecking=no -i /tmp/vultr_key $VM_USER@$VM_IP \
+            'curl -fsS http://localhost:8080/health'
