@@ -8,6 +8,7 @@ set -euo pipefail
 
 REPO_URL="https://github.com/othnielObasi/sovereign-robotics-ops.git"
 APP_DIR="/opt/sovereign-robotics-ops"
+ENV_FILE="/etc/sro/.env"
 
 echo "=== Sovereign Robotics Ops - Vultr Deploy ==="
 
@@ -25,16 +26,30 @@ else
   cd "$APP_DIR"
 fi
 
-# ---- Create .env file ----
-cat > "$APP_DIR/.env" <<ENVFILE
+# ---- Load or create env file ----
+mkdir -p /etc/sro
+
+if [ -f "$ENV_FILE" ]; then
+  echo "Using existing env file at $ENV_FILE"
+else
+  echo "Creating env file at $ENV_FILE"
+  cat > "$ENV_FILE" <<ENVFILE
 GEMINI_API_KEY=${GEMINI_API_KEY:?Set GEMINI_API_KEY before running deploy}
 GEMINI_PROJECT_ID=${GEMINI_PROJECT_ID:-gen-lang-client-0517520000}
 JWT_SECRET=${JWT_SECRET:-$(openssl rand -hex 32)}
 SIM_TOKEN=${SIM_TOKEN:-$(openssl rand -hex 16)}
-NEXT_PUBLIC_API_BASE=
+POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-$(openssl rand -hex 16)}
+NEXT_PUBLIC_API_BASE=${NEXT_PUBLIC_API_BASE:-}
 ENVFILE
+  chmod 600 "$ENV_FILE"
+fi
 
-echo "Created .env"
+set -a
+. "$ENV_FILE"
+set +a
+
+: "${GEMINI_API_KEY:?Missing GEMINI_API_KEY in $ENV_FILE}"
+: "${POSTGRES_PASSWORD:?Missing POSTGRES_PASSWORD in $ENV_FILE}"
 
 # ---- Open firewall ports ----
 ufw allow 80/tcp 2>/dev/null || true
@@ -42,10 +57,10 @@ ufw allow 443/tcp 2>/dev/null || true
 
 # ---- Build and launch ----
 echo "Building Docker images (this may take a few minutes)..."
-docker compose -f docker-compose.vultr.yml build --no-cache
+docker compose --env-file "$ENV_FILE" -f docker-compose.vultr.yml build --pull
 
 echo "Starting services..."
-docker compose -f docker-compose.vultr.yml up -d
+docker compose --env-file "$ENV_FILE" -f docker-compose.vultr.yml up -d --remove-orphans
 
 # ---- Set up Nginx reverse proxy ----
 cat > /etc/nginx/sites-available/sro <<NGINX

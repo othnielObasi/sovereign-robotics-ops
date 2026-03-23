@@ -1,0 +1,68 @@
+name: Provision Vultr VM Env & Deploy
+
+on:
+  workflow_dispatch:
+
+jobs:
+  provision:
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare SSH key
+        run: |
+          set -euo pipefail
+          echo "Writing SSH key"
+          printf '%s' "${{ secrets.SSH_PRIVATE_KEY }}" > /tmp/vultr_key
+          chmod 600 /tmp/vultr_key
+
+      - name: Write env file to VM
+        env:
+          VM_IP: ${{ secrets.VM_IP }}
+          VM_USER: ${{ secrets.VM_USER }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_PROJECT_ID: ${{ secrets.GEMINI_PROJECT_ID }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          SIM_TOKEN: ${{ secrets.SIM_TOKEN }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+        run: |
+          set -euo pipefail
+          printf "GEMINI_API_KEY=%s\nGEMINI_PROJECT_ID=%s\nJWT_SECRET=%s\nSIM_TOKEN=%s\nDATABASE_URL=%s\nPOSTGRES_PASSWORD=%s\n" \
+            "$GEMINI_API_KEY" "$GEMINI_PROJECT_ID" "$JWT_SECRET" "$SIM_TOKEN" "$DATABASE_URL" "$POSTGRES_PASSWORD" \
+            | ssh -o StrictHostKeyChecking=no -i /tmp/vultr_key $VM_USER@$VM_IP 'sudo mkdir -p /etc/sro && sudo tee /etc/sro/.env > /dev/null && sudo chown root:root /etc/sro/.env && sudo chmod 600 /etc/sro/.env'
+
+      - name: Deploy / restart services on VM
+        env:
+          VM_IP: ${{ secrets.VM_IP }}
+          VM_USER: ${{ secrets.VM_USER }}
+        run: |
+          set -euo pipefail
+          ssh -o StrictHostKeyChecking=no -i /tmp/vultr_key $VM_USER@$VM_IP '
+            cd /opt/sovereign-robotics-ops || exit 1
+            sudo bash deploy/vultr-deploy.sh
+          '
+
+      - name: Run backend preflight on VM
+        env:
+          VM_IP: ${{ secrets.VM_IP }}
+          VM_USER: ${{ secrets.VM_USER }}
+        run: |
+          set -euo pipefail
+          ssh -o StrictHostKeyChecking=no -i /tmp/vultr_key $VM_USER@$VM_IP '
+            cd /opt/sovereign-robotics-ops || exit 1
+            sudo docker compose --env-file /etc/sro/.env -f docker-compose.vultr.yml run --rm backend python -m app.preflight
+          '
+
+      - name: Health check
+        env:
+          VM_IP: ${{ secrets.VM_IP }}
+        run: |
+          set -euo pipefail
+          sleep 5
+          if ! curl -fsS http://$VM_IP/health ; then
+            echo "Health check failed" >&2
+            exit 1
+          fi

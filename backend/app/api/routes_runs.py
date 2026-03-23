@@ -15,6 +15,7 @@ from app.schemas.run import RunOut, RunStartResponse
 from app.schemas.events import EventOut
 from app.services.run_service import RunService
 from app.services.gemini_planner import GeminiPlanner
+from app.services.local_fallback_planner import generate_fallback_waypoint
 from app.config import settings
 
 logger = logging.getLogger("app.routes_runs")
@@ -99,6 +100,27 @@ async def start_run(
 
     # Create run and launch loop
     run = svc.start_run(db, mission_id)
+
+    # Persist an immediate conservative seed plan so the run has a deterministic
+    # plan record even before slower background planning completes.
+    try:
+        telemetry = await svc.sim.get_telemetry()
+    except Exception:
+        telemetry = {}
+
+    seed_waypoint = generate_fallback_waypoint(telemetry, json.loads(mission.goal_json))
+    svc._plans[run.id] = [seed_waypoint]
+    svc._append_event(
+        db,
+        run.id,
+        "PLAN",
+        {
+            "mission_id": mission.id,
+            "plan": {"waypoints": [seed_waypoint]},
+            "note": "Initial conservative fallback plan generated at run start",
+        },
+    )
+    db.commit()
 
     # Fire-and-forget: generate LLM plan in background so this response
     # returns immediately.  The plan will be attached to the run once ready.

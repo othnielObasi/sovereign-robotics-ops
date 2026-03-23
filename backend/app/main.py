@@ -3,10 +3,12 @@ from __future__ import annotations
 import logging
 import time
 from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
+from app.http_middleware import InMemoryRateLimiter, RateLimitMiddleware, SecurityHeadersMiddleware
 from app.observability.logging import configure_logging
 from app.db.session import engine, Base
 from sqlalchemy import text
@@ -36,14 +38,11 @@ def init_database(max_retries: int = 5, retry_delay: int = 2):
             with engine.connect() as conn:
                 conn.execute(text("SELECT 1"))
             
-            # Create all tables
-            Base.metadata.create_all(bind=engine)
-            logger.info("✅ Database initialized successfully")
-
-            # Ensure prev_hash column exists on events table
-            # (may be missing if table was created before the column was added)
-            _ensure_prev_hash_column()
-            _ensure_mission_columns()
+            if settings.migrate_on_start:
+                logger.info("✅ Database connection verified; schema managed via Alembic migrations")
+            else:
+                Base.metadata.create_all(bind=engine)
+                logger.info("✅ Database initialized successfully")
 
             return True
             
@@ -56,61 +55,6 @@ def init_database(max_retries: int = 5, retry_delay: int = 2):
                 # Don't crash - allow app to start, health check will fail
                 return False
     return False
-
-
-def _ensure_prev_hash_column():
-    """Add prev_hash column to events table if it doesn't exist."""
-    try:
-        with engine.connect() as conn:
-            # Check if column exists
-            result = conn.execute(text(
-                "SELECT column_name FROM information_schema.columns "
-                "WHERE table_name = 'events' AND column_name = 'prev_hash'"
-            ))
-            if result.fetchone() is None:
-                logger.info("Adding missing prev_hash column to events table")
-                conn.execute(text(
-                    "ALTER TABLE events ADD COLUMN prev_hash VARCHAR DEFAULT ''"
-                ))
-                conn.commit()
-                logger.info("✅ prev_hash column added successfully")
-            else:
-                logger.info("prev_hash column already exists")
-    except Exception as e:
-        logger.warning("Could not add prev_hash column: %s", e)
-
-
-def _ensure_mission_columns():
-    """Add status and updated_at columns to missions table if missing."""
-    try:
-        with engine.connect() as conn:
-            # status column
-            result = conn.execute(text(
-                "SELECT column_name FROM information_schema.columns "
-                "WHERE table_name = 'missions' AND column_name = 'status'"
-            ))
-            if result.fetchone() is None:
-                logger.info("Adding status column to missions table")
-                conn.execute(text(
-                    "ALTER TABLE missions ADD COLUMN status VARCHAR DEFAULT 'draft'"
-                ))
-                conn.commit()
-                logger.info("✅ missions.status column added")
-
-            # updated_at column
-            result = conn.execute(text(
-                "SELECT column_name FROM information_schema.columns "
-                "WHERE table_name = 'missions' AND column_name = 'updated_at'"
-            ))
-            if result.fetchone() is None:
-                logger.info("Adding updated_at column to missions table")
-                conn.execute(text(
-                    "ALTER TABLE missions ADD COLUMN updated_at TIMESTAMP WITH TIME ZONE"
-                ))
-                conn.commit()
-                logger.info("✅ missions.updated_at column added")
-    except Exception as e:
-        logger.warning("Could not add mission columns: %s", e)
 
 
 @asynccontextmanager
@@ -165,11 +109,15 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="Sovereign Robotics Ops API", 
+    title="Sovereign Robotics Ops API",
     version="0.1.0",
-    lifespan=lifespan
+    lifespan=lifespan,
+    docs_url="/docs" if settings.docs_enabled else None,
+    redoc_url="/redoc" if settings.docs_enabled else None,
+    openapi_url="/openapi.json" if settings.docs_enabled else None,
 )
 
+app.state.rate_limiter = InMemoryRateLimiter()
 
 
 @app.get("/")
@@ -177,18 +125,19 @@ def root():
     return {
         "name": "Sovereign Robotics Ops API",
         "status": "ok",
-        "docs": "/docs",
+        "docs": "/docs" if settings.docs_enabled else None,
         "health": "/health"
     }
 
 
-
+app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(RateLimitMiddleware, limiter=app.state.rate_limiter)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins_list,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "Accept", "Origin", "X-Requested-With"],
 )
 
 # Routers

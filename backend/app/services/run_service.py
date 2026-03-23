@@ -50,32 +50,6 @@ class RunService:
     def bind_broadcaster(self, broadcaster):
         self._ws_broadcast = broadcaster
 
-    def rehydrate_plans(self, db: Session) -> None:
-        """Load last PLAN event per running run from the DB into the in-memory plans store.
-
-        This allows the service to resume following a persisted plan after a restart.
-        """
-        try:
-            # Find latest PLAN event per run (order by ts asc and overwrite so last wins)
-            rows = (
-                db.query(Event)
-                .filter(Event.type == "PLAN")
-                .order_by(Event.ts.asc())
-                .all()
-            )
-            for r in rows:
-                try:
-                    payload = json.loads(r.payload_json)
-                    plan = payload.get("plan") if isinstance(payload, dict) else None
-                    if plan and plan.get("waypoints"):
-                        self._plans[r.run_id] = plan.get("waypoints")
-                except Exception:
-                    # ignore malformed plan payloads
-                    pass
-        except Exception:
-            # Non-fatal; continue without plans
-            return
-
     def _append_event(self, db: Session, run_id: str, etype: str, payload: Dict[str, Any]) -> Event:
         # Get previous event hash for chain linking
         prev = (
@@ -168,8 +142,8 @@ class RunService:
                         if waypoints:
                             self._plans[r.id] = waypoints.copy()
                             logger.info("Rehydrated plan for run %s (%d waypoints)", r.id, len(waypoints))
-                    except Exception:
-                        logger.warning("Failed to parse PLAN event for run %s", r.id)
+                    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+                        logger.warning("Failed to parse PLAN event for run %s: %s", r.id, exc)
         except Exception as e:
             logger.warning("rehydrate_plans failed: %s", e)
 

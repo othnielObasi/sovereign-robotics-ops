@@ -36,7 +36,8 @@ class Settings(BaseSettings):
     jwt_audience: str = "sro-ui"
     access_token_expire_minutes: int = 720
     jwt_algorithm: str = "HS256"
-    auth_required: bool = False  # Set True to enforce JWT on all endpoints
+    auth_required: Optional[bool] = None  # Defaults to True in production, False elsewhere
+    allow_dev_tokens: Optional[bool] = None  # Defaults to False in production, True elsewhere
 
     # ------------------------------------------------------------
     # Simulator Connection
@@ -62,6 +63,16 @@ class Settings(BaseSettings):
     # Comma-separated origins, e.g.:
     # "http://localhost:3000,https://gt-audio2texts.vercel.app"
     cors_origins: str = "http://localhost:3000"
+
+    # ------------------------------------------------------------
+    # HTTP Security
+    # ------------------------------------------------------------
+    security_headers_enabled: bool = True
+    rate_limit_enabled: Optional[bool] = None  # Defaults to True in production, False elsewhere
+    rate_limit_requests_per_minute: int = 300
+    api_docs_enabled: Optional[bool] = None  # Defaults to False in production, True elsewhere
+    hsts_max_age_seconds: int = 31536000
+    run_migrations_on_start: Optional[bool] = None  # Defaults to True in production, False elsewhere
 
     # ------------------------------------------------------------
     # Gemini Robotics 1.5 API
@@ -108,6 +119,36 @@ class Settings(BaseSettings):
     @property
     def is_production(self) -> bool:
         return self.environment.lower() == "production"
+
+    @property
+    def require_auth(self) -> bool:
+        if self.auth_required is not None:
+            return self.auth_required
+        return self.is_production
+
+    @property
+    def dev_tokens_enabled(self) -> bool:
+        if self.allow_dev_tokens is not None:
+            return self.allow_dev_tokens
+        return not self.is_production
+
+    @property
+    def rate_limit_active(self) -> bool:
+        if self.rate_limit_enabled is not None:
+            return self.rate_limit_enabled
+        return self.is_production
+
+    @property
+    def docs_enabled(self) -> bool:
+        if self.api_docs_enabled is not None:
+            return self.api_docs_enabled
+        return not self.is_production
+
+    @property
+    def migrate_on_start(self) -> bool:
+        if self.run_migrations_on_start is not None:
+            return self.run_migrations_on_start
+        return self.is_production
 
     @property
     def gemini_configured(self) -> bool:

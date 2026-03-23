@@ -1,0 +1,129 @@
+name: Create Vultr VM & Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      region:
+        description: 'Vultr region (slug)'
+        required: false
+        default: 'ewr'
+      plan:
+        description: 'Vultr plan (slug)'
+        required: false
+        default: 'vc2-1c-1gb'
+      image:
+        description: 'Image slug (example: ubuntu-24-04-x64)'
+        required: false
+        default: 'ubuntu-24-04-x64'
+
+jobs:
+  create-and-deploy:
+    runs-on: ubuntu-latest
+    outputs:
+      instance_id: ${{ steps.create_instance.outputs.instance_id }}
+      instance_ip: ${{ steps.wait_for_instance.outputs.instance_ip }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create startup script (user_data)
+        run: |
+          cat > user_data.sh <<'EOS'
+#!/bin/bash
+set -euo pipefail
+
+# Install docker & prerequisites
+apt-get update -y
+apt-get install -y git curl apt-transport-https ca-certificates gnupg lsb-release
+if ! command -v docker >/dev/null 2>&1; then
+  curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+  echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" > /etc/apt/sources.list.d/docker.list
+  apt-get update -y
+  apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin nginx
+fi
+
+# Clone repo and run deploy script
+REPO="https://github.com/othnielObasi/sovereign-robotics-ops.git"
+APP_DIR="/opt/sovereign-robotics-ops"
+if [ -d "$APP_DIR" ]; then
+  cd "$APP_DIR" && git pull origin main || true
+else
+  git clone "$REPO" "$APP_DIR"
+  cd "$APP_DIR"
+fi
+
+# Run the repo's deploy script. App secrets can be provisioned later via the
+# companion workflow that writes /etc/sro/.env over SSH.
+bash deploy/vultr-deploy.sh || exit 1
+EOS
+
+      - name: Build payload.json
+        env:
+          REGION: ${{ github.event.inputs.region || 'ewr' }}
+          PLAN: ${{ github.event.inputs.plan || 'vc2-1c-1gb' }}
+          IMAGE: ${{ github.event.inputs.image || 'ubuntu-24-04-x64' }}
+        run: |
+          python3 - "$REGION" "$PLAN" "$IMAGE" <<'PY' > payload.json
+import json,sys
+region = sys.argv[1]
+plan = sys.argv[2]
+image = sys.argv[3]
+user_data = open('user_data.sh','r').read()
+payload = {
+  'region': region,
+  'plan': plan,
+  'image': image,
+  'label': 'sro-backend-{}'.format(__import__('time').time()),
+  'user_data': user_data
+}
+print(json.dumps(payload))
+PY
+
+      - name: Create Vultr instance
+        id: create_instance
+        env:
+          VULTR_API_KEY: ${{ secrets.VULTR_API_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "$VULTR_API_KEY" ]; then
+            echo 'Set secret VULTR_API_KEY in repository settings' >&2
+            exit 1
+          fi
+          echo 'Creating Vultr instance...'
+          RESPONSE=$(curl -s -X POST "https://api.vultr.com/v2/instances" \
+            -H "Authorization: Bearer $VULTR_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d @payload.json)
+          echo "$RESPONSE" | jq '.'
+          INSTANCE_ID=$(echo "$RESPONSE" | jq -r '.instance.id // .id // empty')
+          if [ -z "$INSTANCE_ID" ]; then
+            echo 'Failed to create instance. Inspect output above.' >&2
+            exit 1
+          fi
+          echo "instance_id=$INSTANCE_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for instance IPv4
+        id: wait_for_instance
+        env:
+          VULTR_API_KEY: ${{ secrets.VULTR_API_KEY }}
+          INSTANCE_ID: ${{ steps.create_instance.outputs.instance_id }}
+        run: |
+          set -euo pipefail
+          for i in {1..30}; do
+            sleep 10
+            INFO=$(curl -s -H "Authorization: Bearer $VULTR_API_KEY" "https://api.vultr.com/v2/instances/$INSTANCE_ID")
+            IPV4=$(echo "$INFO" | jq -r '.instance.main_ip // .main_ip // empty')
+            STATUS=$(echo "$INFO" | jq -r '.instance.status // .status // empty')
+            echo "status=$STATUS ip=$IPV4"
+            if [ -n "$IPV4" ] && [ "$STATUS" = "active" ]; then
+              echo "instance_ip=$IPV4" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          done
+          echo 'Timed out waiting for instance to become active' >&2
+          exit 1
+
+      - name: Output demo URLs
+        run: |
+          echo "Frontend: http://${{ steps.wait_for_instance.outputs.instance_ip }}/"
+          echo "Health: http://${{ steps.wait_for_instance.outputs.instance_ip }}/health"

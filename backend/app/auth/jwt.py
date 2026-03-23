@@ -52,23 +52,23 @@ async def get_current_user(
     In production the token is **required**.
     """
     if creds is None or creds.credentials == "":
-        if settings.auth_required:
+        if settings.require_auth:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Authentication required",
                 headers={"WWW-Authenticate": "Bearer"},
             )
-        return None  # allow anonymous when auth_required=False
+        return None  # allow anonymous when auth is not required
 
     try:
         payload = decode_token(creds.credentials)
         return payload.get("sub")
     except JWTError as exc:
-        if settings.auth_required:
+        if settings.require_auth:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail=f"Invalid token: {exc}",
                 headers={"WWW-Authenticate": "Bearer"},
             )
-        logger.warning("Invalid JWT ignored (auth_required=False): %s", exc)
+        logger.warning("Invalid JWT ignored (auth not required): %s", exc)
         return None

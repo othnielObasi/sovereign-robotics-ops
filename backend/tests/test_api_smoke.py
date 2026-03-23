@@ -1,6 +1,8 @@
 """API smoke tests using FastAPI TestClient."""
 
 import json
+from contextlib import nullcontext
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -18,14 +20,86 @@ def test_root(client: TestClient):
     assert r.status_code == 200
     data = r.json()
     assert data["status"] == "ok"
+    assert r.headers["x-content-type-options"] == "nosniff"
+    assert r.headers["x-frame-options"] == "DENY"
+    assert "content-security-policy" in r.headers
 
 
 def test_health(client: TestClient):
-    r = client.get("/health")
+    from app.api import routes_health
+
+    class _Conn:
+        def execute(self, _query):
+            return None
+
+    class _Engine:
+        def connect(self):
+            return nullcontext(_Conn())
+
+    async def _ok_telemetry(self):
+        return {"x": 0.0, "y": 0.0}
+
+    async def _close(self):
+        return None
+
+    original_engine = routes_health.engine
+    original_get_telemetry = routes_health.SimAdapter.get_telemetry
+    original_close = routes_health.SimAdapter.close
+    routes_health.engine = _Engine()
+    routes_health.SimAdapter.get_telemetry = _ok_telemetry
+    routes_health.SimAdapter.close = _close
+
+    try:
+        r = client.get("/health")
+    finally:
+        routes_health.engine = original_engine
+        routes_health.SimAdapter.get_telemetry = original_get_telemetry
+        routes_health.SimAdapter.close = original_close
+
     assert r.status_code == 200
     data = r.json()
     assert data["status"] == "ok"
     assert "gemini_enabled" in data
+    assert data["checks"] == {"database": "ok", "simulator": "ok"}
+
+
+def test_dev_token_disabled_when_overridden(client: TestClient):
+    from app.auth import routes as auth_routes
+
+    original = auth_routes.settings.allow_dev_tokens
+    auth_routes.settings.allow_dev_tokens = False
+    try:
+        r = client.post("/auth/dev-token")
+    finally:
+        auth_routes.settings.allow_dev_tokens = original
+
+    assert r.status_code == 404
+
+
+def test_rate_limit_returns_429_when_exceeded(client: TestClient):
+    from app.config import settings
+
+    original_enabled = settings.rate_limit_enabled
+    original_limit = settings.rate_limit_requests_per_minute
+    app.state.rate_limiter.reset()
+    settings.rate_limit_enabled = True
+    settings.rate_limit_requests_per_minute = 2
+
+    headers = {"x-forwarded-for": "203.0.113.10"}
+    try:
+        r1 = client.get("/missions", headers=headers)
+        r2 = client.get("/missions", headers=headers)
+        r3 = client.get("/missions", headers=headers)
+    finally:
+        settings.rate_limit_enabled = original_enabled
+        settings.rate_limit_requests_per_minute = original_limit
+        app.state.rate_limiter.reset()
+
+    assert r1.status_code == 200
+    assert r2.status_code == 200
+    assert r3.status_code == 429
+    assert r3.json()["detail"] == "Rate limit exceeded"
+    assert r3.headers["retry-after"]
 
 
 def test_list_missions_empty(client: TestClient):

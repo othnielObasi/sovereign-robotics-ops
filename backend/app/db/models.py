@@ -47,6 +47,7 @@ class Run(Base):
 
     mission = relationship("Mission", back_populates="runs")
     events = relationship("Event", back_populates="run", cascade="all, delete-orphan")
+    operator_approvals = relationship("OperatorApproval", back_populates="run", cascade="all, delete-orphan")
 
 
 class Event(Base):
@@ -70,3 +71,17 @@ class TelemetrySample(Base):
     run_id = Column(String, ForeignKey("runs.id"), index=True, nullable=False)
     ts = Column(DateTime(timezone=True), nullable=False)
     payload_json = Column(Text, nullable=False)
+
+
+class OperatorApproval(Base):
+    __tablename__ = "operator_approvals"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    run_id = Column(String, ForeignKey("runs.id"), index=True, nullable=False)
+    proposal_hash = Column(String, index=True, nullable=False)
+    approved_by = Column(String, nullable=True)
+    approved_at = Column(DateTime(timezone=True), nullable=False)
+    expires_at = Column(DateTime(timezone=True), nullable=True)
+    notes = Column(Text, nullable=True)
+
+    run = relationship("Run", back_populates="operator_approvals")
