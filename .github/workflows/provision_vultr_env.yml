@@ -15,7 +15,7 @@ jobs:
         run: |
           set -euo pipefail
           echo "Writing SSH key"
-          printf '%s' "${{ secrets.SSH_PRIVATE_KEY }}" > /tmp/vultr_key
+          printf '%s\n' "${{ secrets.SSH_PRIVATE_KEY }}" | tr -d '\r' > /tmp/vultr_key
           chmod 600 /tmp/vultr_key
 
       - name: Validate VM env file exists
