@@ -51,10 +51,6 @@ else
   git clone "$REPO" "$APP_DIR"
   cd "$APP_DIR"
 fi
-
-# Run the repo's deploy script. App secrets can be provisioned later via the
-# companion workflow that writes /etc/sro/.env over SSH.
-bash deploy/vultr-deploy.sh || exit 1
 EOS
 
       - name: Build payload.json
@@ -125,5 +121,5 @@ PY
 
       - name: Output demo URLs
         run: |
-          echo "Frontend: http://${{ steps.wait_for_instance.outputs.instance_ip }}/"
-          echo "Health: http://${{ steps.wait_for_instance.outputs.instance_ip }}/health"
+          echo "VM ready at: http://${{ steps.wait_for_instance.outputs.instance_ip }}/"
+          echo "Next step: run the 'Provision Vultr VM Env & Deploy' workflow after setting VM_IP/VM_USER/SSH_PRIVATE_KEY and app secrets."
