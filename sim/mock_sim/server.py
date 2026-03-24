@@ -63,8 +63,14 @@ class Command(BaseModel):
 
 class ScenarioRequest(BaseModel):
     scenario: str = Field(
-        ..., description="human_approach|human_too_close|path_blocked|clear"
+        ...,
+        description=(
+            "human_approach|human_too_close|path_blocked|clear|"
+            "speed_violation|geofence_breach|low_confidence|"
+            "multi_worker_congestion|loading_bay_rush|corridor_squeeze"
+        ),
     )
+    params: Dict[str, Any] = Field(default_factory=dict)
 
 
 # ---- Mutable human position (can be moved by scenarios) ----
@@ -209,7 +215,12 @@ def _human_signal(x: float, y: float) -> tuple[bool, float, float]:
     detected = d_min < 5.0  # wider detection radius for distance-based governance
     if not detected:
         return False, 0.0, d_min
-    conf = max(0.4, min(0.95, 0.7 + random.uniform(-0.15, 0.15)))
+    # Support forced low confidence for low_confidence scenario
+    if state.get("_force_low_conf"):
+        conf = random.uniform(0.35, 0.50)
+        state.pop("_force_low_conf", None)
+    else:
+        conf = max(0.4, min(0.95, 0.7 + random.uniform(-0.15, 0.15)))
     return True, conf, d_min
 
 
@@ -392,11 +403,267 @@ def inject_scenario(request: Request, body: ScenarioRequest):
         extra_obstacles.clear()
         # Clear any scenario lock so ambient behaviour resumes
         scenario_lock_until = 0.0
+        # Reset walking humans to initial positions
+        for wh in walking_humans:
+            wh.pos = dict(wh.waypoints[0])
+            wh.wp_idx = 0
+            wh.paused_until = 0.0
         return {"ok": True, "scenario": "clear"}
+
+    elif body.scenario == "speed_violation":
+        # Teleport robot into the loading_bay zone and set a high-speed target
+        # across the bay.  The governance engine should flag SAFE_SPEED_01
+        # because loading_bay limit is 0.4 m/s.
+        state["x"] = 5.0
+        state["y"] = 18.0
+        state["theta"] = 0.0
+        state["target"] = {"x": 35.0, "y": 18.0, "max_speed": 0.8}
+        state["speed"] = 0.8
+        return {"ok": True, "scenario": "speed_violation", "robot": {"x": 5.0, "y": 18.0}, "target": state["target"]}
+
+    elif body.scenario == "geofence_breach":
+        # Move robot to the edge of the geofence and set a target outside it.
+        # Governance should flag GEOFENCE_01.
+        state["x"] = 39.0
+        state["y"] = 12.0
+        state["theta"] = 0.0
+        state["target"] = {"x": 42.0, "y": 12.0, "max_speed": 0.5}
+        state["speed"] = 0.5
+        return {"ok": True, "scenario": "geofence_breach", "robot": {"x": 39.0, "y": 12.0}, "target": state["target"]}
+
+    elif body.scenario == "low_confidence":
+        # Place human near robot but inject low-confidence perception.
+        # This triggers UNCERTAINTY_04.
+        human_pos["x"] = round(rx + 2.0 * math.cos(theta), 2)
+        human_pos["y"] = round(ry + 2.0 * math.sin(theta), 2)
+        scenario_lock_until = time.time() + SCENARIO_LOCK_SECS
+        # We force a low confidence next tick by adding a transient noise flag
+        state["_force_low_conf"] = True
+        return {"ok": True, "scenario": "low_confidence", "human": dict(human_pos)}
+
+    elif body.scenario == "multi_worker_congestion":
+        # Move three walking workers very close to the robot's current position
+        # to create a congested zone.  Multiple proximity policies fire.
+        offsets = [(1.5, 0.5), (-0.8, 1.2), (0.5, -1.0)]
+        moved = []
+        for i, (dx, dy) in enumerate(offsets):
+            if i < len(walking_humans):
+                walking_humans[i].pos["x"] = round(rx + dx, 2)
+                walking_humans[i].pos["y"] = round(ry + dy, 2)
+                walking_humans[i].paused_until = time.time() + SCENARIO_LOCK_SECS
+                moved.append(walking_humans[i].to_dict())
+        scenario_lock_until = time.time() + SCENARIO_LOCK_SECS
+        return {"ok": True, "scenario": "multi_worker_congestion", "workers": moved}
+
+    elif body.scenario == "loading_bay_rush":
+        # Simulate a busy loading bay: teleport robot to the bay and place two
+        # workers + an obstacle in the path.  Triggers speed limit, proximity,
+        # and obstacle clearance policies simultaneously.
+        state["x"] = 8.0
+        state["y"] = 20.0
+        state["theta"] = 0.0
+        state["target"] = {"x": 30.0, "y": 20.0, "max_speed": 0.6}
+        state["speed"] = 0.6
+        # Workers blocking the path
+        if len(walking_humans) >= 2:
+            walking_humans[0].pos = {"x": 14.0, "y": 20.5}
+            walking_humans[0].paused_until = time.time() + SCENARIO_LOCK_SECS
+            walking_humans[1].pos = {"x": 20.0, "y": 19.5}
+            walking_humans[1].paused_until = time.time() + SCENARIO_LOCK_SECS
+        # Pallet obstacle
+        extra_obstacles.append({"x": 17.0, "y": 20.0, "r": 0.5})
+        scenario_lock_until = time.time() + SCENARIO_LOCK_SECS
+        return {
+            "ok": True,
+            "scenario": "loading_bay_rush",
+            "robot": {"x": 8.0, "y": 20.0},
+            "target": state["target"],
+            "obstacle": {"x": 17.0, "y": 20.0},
+        }
+
+    elif body.scenario == "corridor_squeeze":
+        # Robot in a narrow corridor section with obstacles on both sides and a
+        # worker ahead.  Tests obstacle clearance + human proximity together.
+        state["x"] = 20.0
+        state["y"] = 7.0
+        state["theta"] = 0.0
+        state["target"] = {"x": 28.0, "y": 7.0, "max_speed": 0.5}
+        state["speed"] = 0.5
+        # Tight obstacles on both sides
+        extra_obstacles.extend([
+            {"x": 22.0, "y": 7.4, "r": 0.3},
+            {"x": 22.0, "y": 6.6, "r": 0.3},
+            {"x": 24.0, "y": 7.3, "r": 0.3},
+            {"x": 24.0, "y": 6.7, "r": 0.3},
+        ])
+        # Worker at the end of the squeeze
+        human_pos["x"] = 26.0
+        human_pos["y"] = 7.0
+        scenario_lock_until = time.time() + SCENARIO_LOCK_SECS
+        return {
+            "ok": True,
+            "scenario": "corridor_squeeze",
+            "robot": {"x": 20.0, "y": 7.0},
+            "human": dict(human_pos),
+            "extra_obstacles": 4,
+        }
 
     else:
         raise HTTPException(
             status_code=400,
             detail=f"Unknown scenario: {body.scenario}. "
-                   f"Valid: human_approach, human_too_close, path_blocked, clear",
+                   f"Valid: human_approach, human_too_close, path_blocked, clear, "
+                   f"speed_violation, geofence_breach, low_confidence, "
+                   f"multi_worker_congestion, loading_bay_rush, corridor_squeeze",
         )
+
+
+# ---------------------------------------------------------------------------
+# Scenario catalog & scripted sequences
+# ---------------------------------------------------------------------------
+
+SCENARIO_CATALOG = [
+    {
+        "id": "human_approach",
+        "name": "Human Approaching",
+        "description": "Place human ~2.5 m ahead of robot — triggers SLOW policy state",
+        "policies_exercised": ["HUMAN_PROXIMITY_02"],
+        "expected_state": "SLOW",
+    },
+    {
+        "id": "human_too_close",
+        "name": "Human Emergency Stop",
+        "description": "Place human ~0.8 m ahead of robot — triggers full STOP",
+        "policies_exercised": ["HUMAN_PROXIMITY_02"],
+        "expected_state": "STOP",
+    },
+    {
+        "id": "path_blocked",
+        "name": "Path Blocked",
+        "description": "Insert obstacle 1.5 m ahead — triggers REPLAN via OBSTACLE_CLEARANCE_03",
+        "policies_exercised": ["OBSTACLE_CLEARANCE_03"],
+        "expected_state": "REPLAN",
+    },
+    {
+        "id": "speed_violation",
+        "name": "Speed Violation in Loading Bay",
+        "description": "Robot at 0.8 m/s in loading_bay (limit 0.4) — triggers SAFE_SPEED_01",
+        "policies_exercised": ["SAFE_SPEED_01"],
+        "expected_state": "SLOW",
+    },
+    {
+        "id": "geofence_breach",
+        "name": "Geofence Breach",
+        "description": "Robot targets a point outside the geofence — triggers GEOFENCE_01",
+        "policies_exercised": ["GEOFENCE_01"],
+        "expected_state": "STOP",
+    },
+    {
+        "id": "low_confidence",
+        "name": "Low Perception Confidence",
+        "description": "Human detected but confidence < 0.55 — triggers UNCERTAINTY_04",
+        "policies_exercised": ["UNCERTAINTY_04", "HUMAN_PROXIMITY_02"],
+        "expected_state": "SLOW",
+    },
+    {
+        "id": "multi_worker_congestion",
+        "name": "Worker Congestion",
+        "description": "Three workers cluster around robot — multiple proximity hits",
+        "policies_exercised": ["WORKER_PROXIMITY_06"],
+        "expected_state": "STOP",
+    },
+    {
+        "id": "loading_bay_rush",
+        "name": "Loading Bay Rush",
+        "description": "Busy bay with workers, obstacle, and excessive speed — multi-policy",
+        "policies_exercised": ["SAFE_SPEED_01", "WORKER_PROXIMITY_06", "OBSTACLE_CLEARANCE_03"],
+        "expected_state": "STOP",
+    },
+    {
+        "id": "corridor_squeeze",
+        "name": "Corridor Squeeze",
+        "description": "Narrow passage with obstacles on both sides and a worker ahead",
+        "policies_exercised": ["OBSTACLE_CLEARANCE_03", "HUMAN_PROXIMITY_02"],
+        "expected_state": "STOP",
+    },
+    {
+        "id": "clear",
+        "name": "Reset / Clear",
+        "description": "Reset human position, obstacles, and workers to defaults",
+        "policies_exercised": [],
+        "expected_state": "SAFE",
+    },
+]
+
+SCRIPTED_SEQUENCES = {
+    "governance_demo": {
+        "name": "Governance Demo (5-step)",
+        "description": "Walk through the five core governance reactions in order",
+        "steps": [
+            {"scenario": "clear", "hold_seconds": 2, "narration": "Start with a clean slate"},
+            {"scenario": "human_approach", "hold_seconds": 5, "narration": "Human enters slow zone — speed reduced"},
+            {"scenario": "human_too_close", "hold_seconds": 5, "narration": "Human enters stop zone — full halt"},
+            {"scenario": "path_blocked", "hold_seconds": 5, "narration": "Obstacle injected — robot must replan"},
+            {"scenario": "clear", "hold_seconds": 2, "narration": "Reset to safe operation"},
+        ],
+    },
+    "policy_sweep": {
+        "name": "Full Policy Sweep",
+        "description": "Exercise every policy in the catalog sequentially",
+        "steps": [
+            {"scenario": "clear", "hold_seconds": 2, "narration": "Reset"},
+            {"scenario": "speed_violation", "hold_seconds": 5, "narration": "Speed violation in loading bay"},
+            {"scenario": "clear", "hold_seconds": 2, "narration": "Reset"},
+            {"scenario": "geofence_breach", "hold_seconds": 5, "narration": "Geofence breach attempt"},
+            {"scenario": "clear", "hold_seconds": 2, "narration": "Reset"},
+            {"scenario": "low_confidence", "hold_seconds": 5, "narration": "Low perception confidence"},
+            {"scenario": "clear", "hold_seconds": 2, "narration": "Reset"},
+            {"scenario": "multi_worker_congestion", "hold_seconds": 5, "narration": "Worker congestion zone"},
+            {"scenario": "clear", "hold_seconds": 2, "narration": "Reset"},
+            {"scenario": "corridor_squeeze", "hold_seconds": 5, "narration": "Corridor squeeze — multi-policy"},
+            {"scenario": "clear", "hold_seconds": 2, "narration": "Final reset"},
+        ],
+    },
+    "stress_test": {
+        "name": "Multi-Policy Stress Test",
+        "description": "Rapidly trigger compound policy violations",
+        "steps": [
+            {"scenario": "clear", "hold_seconds": 1, "narration": "Reset"},
+            {"scenario": "loading_bay_rush", "hold_seconds": 6, "narration": "Loading bay rush — 3 policies fire"},
+            {"scenario": "clear", "hold_seconds": 1, "narration": "Reset"},
+            {"scenario": "corridor_squeeze", "hold_seconds": 6, "narration": "Corridor squeeze — obstacle + human"},
+            {"scenario": "clear", "hold_seconds": 1, "narration": "Reset"},
+            {"scenario": "multi_worker_congestion", "hold_seconds": 6, "narration": "Worker congestion"},
+            {"scenario": "clear", "hold_seconds": 1, "narration": "Final reset"},
+        ],
+    },
+}
+
+
+@app.get("/scenarios")
+def list_scenarios(request: Request):
+    """Return the full scenario catalog with metadata."""
+    _require_sim_token(request)
+    return {"scenarios": SCENARIO_CATALOG}
+
+
+@app.get("/scenarios/sequences")
+def list_sequences(request: Request):
+    """Return available scripted scenario sequences."""
+    _require_sim_token(request)
+    return {
+        "sequences": {
+            k: {"name": v["name"], "description": v["description"], "step_count": len(v["steps"])}
+            for k, v in SCRIPTED_SEQUENCES.items()
+        }
+    }
+
+
+@app.get("/scenarios/sequences/{sequence_id}")
+def get_sequence(request: Request, sequence_id: str):
+    """Return the full step list for a scripted sequence."""
+    _require_sim_token(request)
+    seq = SCRIPTED_SEQUENCES.get(sequence_id)
+    if not seq:
+        raise HTTPException(status_code=404, detail=f"Unknown sequence: {sequence_id}")
+    return seq

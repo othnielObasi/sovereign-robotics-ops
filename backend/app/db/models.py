@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import Column, String, DateTime, Text, ForeignKey, Integer
+from sqlalchemy import Column, String, DateTime, Text, ForeignKey, Integer, Float, Index
 from sqlalchemy.orm import relationship
 
 from app.db.session import Base
@@ -41,13 +41,14 @@ class Run(Base):
 
     id = Column(String, primary_key=True, index=True)
     mission_id = Column(String, ForeignKey("missions.id"), nullable=False)
-    status = Column(String, nullable=False)  # running|stopped|completed|failed
+    status = Column(String, nullable=False)  # running|paused|stopped|completed|failed
     started_at = Column(DateTime(timezone=True), nullable=False)
     ended_at = Column(DateTime(timezone=True), nullable=True)
 
     mission = relationship("Mission", back_populates="runs")
     events = relationship("Event", back_populates="run", cascade="all, delete-orphan")
     operator_approvals = relationship("OperatorApproval", back_populates="run", cascade="all, delete-orphan")
+    governance_decisions = relationship("GovernanceDecisionRecord", back_populates="run", cascade="all, delete-orphan")
 
 
 class Event(Base):
@@ -56,12 +57,41 @@ class Event(Base):
     id = Column(String, primary_key=True, index=True)
     run_id = Column(String, ForeignKey("runs.id"), nullable=False)
     ts = Column(DateTime(timezone=True), nullable=False)
-    type = Column(String, nullable=False)  # TELEMETRY|DECISION|ALERT
+    type = Column(String, nullable=False)  # TELEMETRY|DECISION|ALERT|EXECUTION|PLAN|STAGNATION|INTERVENTION
     payload_json = Column(Text, nullable=False)
     hash = Column(String, nullable=False)
     prev_hash = Column(String, nullable=True, default="0" * 64)
 
     run = relationship("Run", back_populates="events")
+
+
+class GovernanceDecisionRecord(Base):
+    """Persisted record of every governance evaluation — queryable, auditable."""
+    __tablename__ = "governance_decisions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    run_id = Column(String, ForeignKey("runs.id"), index=True, nullable=False)
+    ts = Column(DateTime(timezone=True), nullable=False)
+    decision = Column(String, nullable=False)  # APPROVED|DENIED|NEEDS_REVIEW
+    policy_state = Column(String, nullable=False, default="SAFE")  # SAFE|SLOW|STOP|REPLAN
+    risk_score = Column(Float, nullable=False, default=0.0)
+    policy_hits = Column(Text, nullable=False, default="[]")  # JSON array of policy IDs
+    reasons = Column(Text, nullable=False, default="[]")  # JSON array of reason strings
+    required_action = Column(Text, nullable=True)
+    proposal_intent = Column(String, nullable=False, default="MOVE_TO")
+    proposal_json = Column(Text, nullable=False, default="{}")
+    telemetry_summary = Column(Text, nullable=True)  # compact telemetry snapshot
+    was_executed = Column(String, nullable=False, default="false")  # "true"|"false"
+    event_hash = Column(String, nullable=True)  # links to chain-of-trust Event.hash
+    escalated = Column(String, nullable=False, default="false")  # "true" if escalated to operator
+
+    run = relationship("Run", back_populates="governance_decisions")
+
+    __table_args__ = (
+        Index("ix_gov_decisions_run_ts", "run_id", "ts"),
+        Index("ix_gov_decisions_policy_state", "policy_state"),
+        Index("ix_gov_decisions_decision", "decision"),
+    )
 
 
 class TelemetrySample(Base):

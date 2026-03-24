@@ -21,6 +21,7 @@ from app.api.routes_ws import router as ws_router, hub
 from app.api.routes_compliance import router as compliance_router
 from app.auth.routes import router as auth_router
 from app.api.routes_llm import router as llm_router
+from app.api.routes_operator import router as operator_router
 from app.services.run_service import RunService
 
 configure_logging()
@@ -150,6 +151,7 @@ app.include_router(sim_router)
 app.include_router(ws_router)
 app.include_router(compliance_router)
 app.include_router(llm_router)
+app.include_router(operator_router)
 
 # Initialize RunService and bind broadcaster
 run_service = RunService()

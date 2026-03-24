@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from sqlalchemy.orm import Session
 
@@ -24,15 +24,14 @@ logger = logging.getLogger("app.run_service")
 class RunService:
     """Owns run lifecycle and the runtime loop.
 
-    For MVP, we keep state in-process:
-    - Each run gets an asyncio Task that polls sim telemetry,
-      proposes actions, applies governance, executes if allowed,
-      stores chain-of-trust events, and broadcasts updates.
+    Supports: start, stop, pause, resume for intervention control.
+    Records every governance decision to the governance_decisions table.
     """
 
     def __init__(self):
         self._tasks: Dict[str, asyncio.Task] = {}
         self._stop_flags: Dict[str, asyncio.Event] = {}
+        self._pause_flags: Dict[str, asyncio.Event] = {}  # set = paused
         self._ws_broadcast = None  # injected by WS manager
         self._plans: Dict[str, List[Dict[str, Any]]] = {}
 
@@ -152,13 +151,76 @@ class RunService:
             self._stop_flags[run_id].set()
 
         run = db.query(Run).filter(Run.id == run_id).first()
-        if run and run.status == "running":
+        if run and run.status in ("running", "paused"):
             run.status = "stopped"
             run.ended_at = utc_now()
             db.commit()
 
+        # Log INTERVENTION event
+        self._append_event(db, run_id, "INTERVENTION", {
+            "type": "STOP",
+            "actor": "operator",
+            "reason": "Manual stop requested",
+        })
+        db.commit()
+
         if self._ws_broadcast:
             await self._ws_broadcast(run_id, {"kind": "status", "data": {"status": "stopped"}})
+
+    async def pause_run(self, db: Session, run_id: str) -> None:
+        """Pause a running run — loop continues but stops executing actions."""
+        run = db.query(Run).filter(Run.id == run_id).first()
+        if not run or run.status != "running":
+            return
+
+        if run_id not in self._pause_flags:
+            self._pause_flags[run_id] = asyncio.Event()
+        self._pause_flags[run_id].set()  # set = paused
+
+        run.status = "paused"
+        db.commit()
+
+        # Send STOP to simulator
+        try:
+            await self.sim.send_command({"intent": "STOP", "params": {}})
+        except Exception:
+            pass
+
+        self._append_event(db, run_id, "INTERVENTION", {
+            "type": "PAUSE",
+            "actor": "operator",
+            "reason": "Run paused by operator",
+        })
+        db.commit()
+
+        if self._ws_broadcast:
+            await self._ws_broadcast(run_id, {"kind": "status", "data": {"status": "paused"}})
+
+    async def resume_run(self, db: Session, run_id: str) -> None:
+        """Resume a paused run."""
+        run = db.query(Run).filter(Run.id == run_id).first()
+        if not run or run.status != "paused":
+            return
+
+        run.status = "running"
+        db.commit()
+
+        # Clear pause flag
+        if run_id in self._pause_flags:
+            self._pause_flags[run_id].clear()
+
+        # Re-launch loop if needed
+        self._launch_loop(run_id)
+
+        self._append_event(db, run_id, "INTERVENTION", {
+            "type": "RESUME",
+            "actor": "operator",
+            "reason": "Run resumed by operator",
+        })
+        db.commit()
+
+        if self._ws_broadcast:
+            await self._ws_broadcast(run_id, {"kind": "status", "data": {"status": "running"}})
 
     async def _run_loop(self, run_id: str) -> None:
         # IMPORTANT: DB sessions are not thread-safe; create per loop.
@@ -174,10 +236,15 @@ class RunService:
                 if self._stop_flags.get(run_id) and self._stop_flags[run_id].is_set():
                     break
 
+                # paused? — sleep and re-check
+                if self._pause_flags.get(run_id) and self._pause_flags[run_id].is_set():
+                    await asyncio.sleep(0.5)
+                    continue
+
                 db = SessionLocal()
                 try:
                     run = db.query(Run).filter(Run.id == run_id).first()
-                    if not run or run.status != "running":
+                    if not run or run.status not in ("running",):
                         break
                     mission = db.query(Mission).filter(Mission.id == run.mission_id).first()
                     goal = json.loads(mission.goal_json) if mission else {"x": 0, "y": 0}
@@ -266,8 +333,10 @@ class RunService:
 
                     proposal_payload = proposal.model_dump()
 
-                    # Governance evaluates
-                    gov_decision = self.gov.evaluate(telemetry, proposal)
+                    # Governance evaluates and persists decision
+                    gov_decision = self.gov.evaluate_and_record(
+                        db, run_id, telemetry, proposal,
+                    )
                     gov_payload = gov_decision.model_dump()
 
                     # Chain-of-trust event (decision)
@@ -280,7 +349,7 @@ class RunService:
                         "governance": gov_payload,
                     }
 
-                    self._append_event(db, run_id, "DECISION", decision_event_payload)
+                    decision_evt = self._append_event(db, run_id, "DECISION", decision_event_payload)
 
                     # If approved, execute
                     execution = None
@@ -300,6 +369,18 @@ class RunService:
                                     self._plans.pop(run_id, None)
                             except Exception:
                                 pass
+
+                    # Update the governance decision record with execution result and event hash
+                    from app.db.models import GovernanceDecisionRecord
+                    latest_gov = (
+                        db.query(GovernanceDecisionRecord)
+                        .filter(GovernanceDecisionRecord.run_id == run_id)
+                        .order_by(GovernanceDecisionRecord.id.desc())
+                        .first()
+                    )
+                    if latest_gov:
+                        latest_gov.was_executed = "true" if was_executed else "false"
+                        latest_gov.event_hash = decision_evt.hash
 
                     # Record outcome in agent memory (agentic mode)
                     self.agent.record_outcome(proposal, gov_decision, was_executed)

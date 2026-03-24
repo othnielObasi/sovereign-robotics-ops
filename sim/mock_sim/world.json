@@ -12,6 +12,15 @@
         "min_x": 0,
         "max_x": 40,
         "min_y": 0,
+        "max_y": 12
+      }
+    },
+    {
+      "name": "corridor",
+      "rect": {
+        "min_x": 0,
+        "max_x": 40,
+        "min_y": 12,
         "max_y": 15
       }
     },

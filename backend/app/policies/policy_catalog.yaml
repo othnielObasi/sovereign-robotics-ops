@@ -1,30 +1,82 @@
 policies:
   - policy_id: GEOFENCE_01
     name: Geofence enforcement
-    description: Deny actions if robot is outside the allowed operating area.
+    description: Deny actions if robot or destination is outside the allowed operating area.
     severity: HIGH
+    parameters:
+      min_x: 0.0
+      max_x: 40.0
+      min_y: 0.0
+      max_y: 25.0
+    trigger: "Robot position or destination outside boundary"
+    action: STOP
 
   - policy_id: SAFE_SPEED_01
     name: Zone speed limit
-    description: Enforce max speed per zone.
+    description: Enforce maximum speed per zone type. Aisle, corridor, and loading bay each have distinct limits.
     severity: HIGH
+    parameters:
+      aisle_limit_ms: 0.5
+      corridor_limit_ms: 0.7
+      loading_bay_limit_ms: 0.4
+    trigger: "Proposed speed exceeds zone limit"
+    action: SLOW
+
+  - policy_id: HUMAN_PROXIMITY_02
+    name: Human proximity enforcement
+    description: Enforce SLOW when a human or worker is within the slow radius, STOP within the stop radius.
+    severity: HIGH
+    parameters:
+      slow_radius_m: 3.0
+      stop_radius_m: 1.0
+      max_speed_near_human_ms: 0.4
+    trigger: "Human/worker within proximity radius"
+    action: "STOP if < 1m, SLOW if < 3m"
 
   - policy_id: HUMAN_CLEARANCE_02
-    name: Human proximity slowdown
-    description: Deny unsafe speed when a human is detected nearby.
+    name: Human confidence speed check
+    description: Deny unsafe speed when a human is detected with high confidence and speed exceeds safe limit.
     severity: HIGH
+    parameters:
+      min_confidence: 0.65
+      max_speed_near_human_ms: 0.4
+    trigger: "Human detected (conf >= 0.65) and speed too high"
+    action: SLOW
 
   - policy_id: OBSTACLE_CLEARANCE_03
     name: Obstacle clearance
-    description: Deny motion if obstacle distance is below threshold.
+    description: Deny motion if nearest obstacle is below the minimum clearance distance.
     severity: HIGH
+    parameters:
+      min_clearance_m: 0.5
+    trigger: "Obstacle distance < 0.5m"
+    action: REPLAN
 
   - policy_id: UNCERTAINTY_04
     name: Perception uncertainty gate
-    description: Deny risky actions when perception confidence is too low.
+    description: Flag risky actions when human detection confidence is below the threshold.
     severity: MEDIUM
+    parameters:
+      min_human_confidence: 0.65
+      min_confidence_for_move: 0.55
+    trigger: "Human detected but confidence < 65%"
+    action: SLOW + operator review
 
   - policy_id: HITL_05
     name: Human-in-the-loop trigger
-    description: Require review when risk score is above threshold.
-    severity: MEDIUM
+    description: Escalate to operator review when aggregate risk score exceeds the threshold.
+    severity: HIGH
+    parameters:
+      risk_threshold: 0.75
+    trigger: "Risk score >= 0.75"
+    action: NEEDS_REVIEW (operator escalation)
+
+  - policy_id: WORKER_PROXIMITY_06
+    name: Walking worker proximity
+    description: Enforce SLOW/STOP when walking warehouse workers (separate from primary human detection) are within proximity radius.
+    severity: HIGH
+    parameters:
+      slow_radius_m: 3.0
+      stop_radius_m: 1.0
+    trigger: "Walking worker within proximity radius"
+    action: "STOP if < 1m, SLOW if < 3m"

@@ -182,6 +182,40 @@ async def stop_run(
     return {"ok": True}
 
 
+@router.post("/runs/{run_id}/pause")
+async def pause_run(
+    run_id: str,
+    db: Session = Depends(get_db),
+    user: str | None = Depends(get_current_user),
+):
+    """Pause a running run — robot stops executing but run can be resumed."""
+    svc = get_run_svc()
+    run = db.query(Run).filter(Run.id == run_id).first()
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+    if run.status != "running":
+        raise HTTPException(status_code=400, detail=f"Cannot pause run in state '{run.status}'")
+    await svc.pause_run(db, run_id)
+    return {"ok": True, "status": "paused"}
+
+
+@router.post("/runs/{run_id}/resume")
+async def resume_run(
+    run_id: str,
+    db: Session = Depends(get_db),
+    user: str | None = Depends(get_current_user),
+):
+    """Resume a paused run."""
+    svc = get_run_svc()
+    run = db.query(Run).filter(Run.id == run_id).first()
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+    if run.status != "paused":
+        raise HTTPException(status_code=400, detail=f"Cannot resume run in state '{run.status}'")
+    await svc.resume_run(db, run_id)
+    return {"ok": True, "status": "running"}
+
+
 @router.get("/runs/{run_id}/events", response_model=List[EventOut])
 def list_events(
     run_id: str,
