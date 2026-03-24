@@ -250,12 +250,16 @@ class RunService:
         if self._ws_broadcast:
             await self._ws_broadcast(run_id, {"kind": "status", "data": {"status": "running"}})
 
+    MAX_CONSECUTIVE_TICK_ERRORS = 5
+    AGENT_PROPOSAL_TIMEOUT = 15  # seconds
+
     async def _run_loop(self, run_id: str) -> None:
         # IMPORTANT: DB sessions are not thread-safe; create per loop.
         from app.db.session import SessionLocal
         from app.db.models import Mission
 
         last_governance: Optional[Dict[str, Any]] = None
+        consecutive_errors = 0
 
         logger.info("Run loop started: %s", run_id)
         try:
@@ -350,7 +354,12 @@ class RunService:
                         )
                     else:
                         # Agent proposes action (may be LLM-driven depending on settings)
-                        proposal = await self.agent.propose(telemetry, goal, nl_task, last_governance, world_state)
+                        try:
+                            async with asyncio.timeout(self.AGENT_PROPOSAL_TIMEOUT):
+                                proposal = await self.agent.propose(telemetry, goal, nl_task, last_governance, world_state)
+                        except (asyncio.TimeoutError, Exception) as prop_err:
+                            logger.warning("Run %s: agent proposal failed/timed out: %s — using deterministic fallback", run_id, prop_err)
+                            proposal = self.agent.simple.propose(telemetry, goal, last_governance)
                     # Clamp planned max_speed to zone limits to avoid trivial NEEDS_REVIEW
                     if proposal.intent == "MOVE_TO":
                         zone = telemetry.get("zone", "aisle")
@@ -568,6 +577,30 @@ class RunService:
                             await self._ws_broadcast(run_id, {"kind": "status", "data": {"status": "completed"}})
                         break
 
+                    # Tick succeeded — reset error counter
+                    consecutive_errors = 0
+
+                except Exception as tick_err:
+                    consecutive_errors += 1
+                    logger.warning(
+                        "Run %s: tick error (%d/%d): %s",
+                        run_id, consecutive_errors, self.MAX_CONSECUTIVE_TICK_ERRORS, tick_err,
+                    )
+                    try:
+                        db.rollback()
+                    except Exception:
+                        pass
+                    if consecutive_errors >= self.MAX_CONSECUTIVE_TICK_ERRORS:
+                        logger.error("Run %s: too many consecutive tick errors, marking failed", run_id)
+                        try:
+                            run = db.query(Run).filter(Run.id == run_id).first()
+                            if run:
+                                run.status = "failed"
+                                run.ended_at = utc_now()
+                                db.commit()
+                        except Exception:
+                            pass
+                        break
                 finally:
                     db.close()
 
