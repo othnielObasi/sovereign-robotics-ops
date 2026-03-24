@@ -102,7 +102,7 @@ server {
     }
 
     # Backend direct routes (no /api prefix needed for these)
-    location ~ ^/(health|docs|openapi\\.json|ws) {
+    location ~ ^/(health|docs|redoc|openapi\\.json|ws) {
         proxy_pass http://127.0.0.1:8080;
         proxy_http_version 1.1;
         proxy_set_header Upgrade \$http_upgrade;
