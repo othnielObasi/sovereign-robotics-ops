@@ -1,6 +1,8 @@
 name: Provision Vultr VM Env & Deploy
 
 on:
+  push:
+    branches: [ main ]
   workflow_dispatch:
 
 jobs:
@@ -59,3 +61,7 @@ jobs:
           sleep 5
           ssh -o StrictHostKeyChecking=no -i /tmp/vultr_key $VM_USER@$VM_IP \
             'curl -fsS http://localhost:8080/health'
+
+      - name: Cleanup SSH key
+        if: always()
+        run: rm -f /tmp/vultr_key
