@@ -1,8 +1,10 @@
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { getRun, listEvents, stopRun, getWorld, getTelemetry, getPathPreview, triggerScenario, generateLLMPlan, executeLLMPlan, analyzeScene, analyzeTelemetry, detectFailures, agenticPropose, getMission } from "@/lib/api";
+import { getRun, listEvents, stopRun, getWorld, getTelemetry, getPathPreview, triggerScenario, generateLLMPlan, executeLLMPlan, analyzeScene, analyzeTelemetry, detectFailures, agenticPropose, getMission, getRiskHeatmap } from "@/lib/api";
 import { Map2D } from "@/components/Map2D";
+import { ScoreCard } from "@/components/ScoreCard";
+import { IntrospectionPanel } from "@/components/IntrospectionPanel";
 import { wsUrlForRun } from "@/lib/ws";
 import type { WsMessage } from "@/lib/types";
 import Link from "next/link";
@@ -79,6 +81,7 @@ export default function RunPage({ params }: { params: { runId: string } }) {
   const [showHeatmap, setShowHeatmap] = useState<boolean>(true);
   const [showTrail, setShowTrail] = useState<boolean>(true);
   const [pathPoints, setPathPoints] = useState<Array<{x:number;y:number}> | null>(null);
+  const [riskCells, setRiskCells] = useState<Array<{x:number;y:number;risk:number}>>([]);
   const [alerts, setAlerts] = useState<any[]>([]);
   const [events, setEvents] = useState<any[]>([]);
   const [status, setStatus] = useState<string>("");
@@ -226,6 +229,10 @@ export default function RunPage({ params }: { params: { runId: string } }) {
       try {
         const res = await getPathPreview(runId);
         setPathPoints(res.points || null);
+      } catch (_) {}
+      try {
+        const hm = await getRiskHeatmap(runId);
+        setRiskCells(hm.cells || []);
       } catch (_) {}
     }
     tick();
@@ -471,6 +478,8 @@ export default function RunPage({ params }: { params: { runId: string } }) {
         </div>
         <div className="flex items-center gap-2">
           {run?.mission_id && <span className="text-xs text-slate-500 font-mono">{run.mission_id}</span>}
+          {mission?.title && <span className="text-xs text-cyan-400 font-medium truncate max-w-[200px]" title={mission.title}>{mission.title}</span>}
+          {mission?.goal && <span className="text-[10px] text-slate-500">→ ({mission.goal.x}, {mission.goal.y})</span>}
           {currentStatus !== "stopped" && (
             <button onClick={onStop} className="bg-red-500/80 hover:bg-red-600 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition">
               Stop
@@ -530,7 +539,7 @@ export default function RunPage({ params }: { params: { runId: string } }) {
               </div>
             </div>
             <div className="min-h-[450px]">
-              <Map2D world={world} telemetry={telemetry} pathPoints={pathPoints} planWaypoints={llmPlan?.waypoints || null} missionGoal={resolveBayGoal(missionInstruction, world?.bays || []) || mission?.goal || null} showHeatmap={showHeatmap} showTrail={showTrail} safetyState={safety.state} hoveredWaypointIdx={hoveredWaypointIdx} />
+              <Map2D world={world} telemetry={telemetry} pathPoints={pathPoints} planWaypoints={llmPlan?.waypoints || null} missionGoal={resolveBayGoal(missionInstruction, world?.bays || []) || mission?.goal || null} showHeatmap={showHeatmap} showTrail={showTrail} safetyState={safety.state} hoveredWaypointIdx={hoveredWaypointIdx} riskCells={riskCells} />
             </div>
             {/* Map Legend */}
             <div className="flex items-center gap-3 mt-2 px-1 flex-wrap">
@@ -540,6 +549,7 @@ export default function RunPage({ params }: { params: { runId: string } }) {
               <span className="flex items-center gap-1 text-[10px] text-slate-400"><span className="w-2.5 h-2.5 rounded-full bg-purple-400 inline-block" /> Plan</span>
               <span className="flex items-center gap-1 text-[10px] text-slate-400"><span className="w-2.5 h-2.5 rounded-full bg-emerald-400 inline-block" /> Goal</span>
               <span className="flex items-center gap-1 text-[10px] text-slate-400"><span className="w-2.5 h-2.5 rounded-full bg-blue-400 inline-block" /> Path</span>
+              <span className="flex items-center gap-1 text-[10px] text-slate-400"><span className="w-2.5 h-2.5 rounded-sm bg-red-400/50 inline-block" /> Risk Zone</span>
               <span className="text-[10px] text-slate-600 ml-auto">Scroll to zoom · Drag to pan</span>
             </div>
           </Card>
@@ -1078,6 +1088,16 @@ export default function RunPage({ params }: { params: { runId: string } }) {
               </ul>
             )}
           </Card>
+
+          {/* Scorecard (#10) */}
+          <CollapsibleCard title="📊 Performance Scorecard" defaultOpen={false}>
+            <ScoreCard runId={runId} />
+          </CollapsibleCard>
+
+          {/* Agent Introspection (#20) */}
+          <CollapsibleCard title="🔍 Agent Introspection" defaultOpen={false}>
+            <IntrospectionPanel runId={runId} />
+          </CollapsibleCard>
         </div>
       </div>
 

@@ -284,3 +284,92 @@ export async function evaluateGovernance(telemetry: any, proposal: any) {
   if (!r.ok) throw new Error(await parseErrorResponse(r, "Governance evaluation failed"));
   return r.json();
 }
+
+// ---- Scoring (#10) ----
+
+export async function getRunScores(runId: string) {
+  const r = await fetchWithRetry(`${API_BASE}/runs/${runId}/scores`, { cache: "no-store" });
+  if (!r.ok) throw new Error(await parseErrorResponse(r, "Failed to get scores"));
+  return r.json();
+}
+
+// ---- Risk Heatmap (#21) ----
+
+export async function getRiskHeatmap(runId: string, gridSize = 2.0) {
+  const r = await fetchWithRetry(`${API_BASE}/runs/${runId}/risk-heatmap?grid_size=${gridSize}`, { cache: "no-store" });
+  if (!r.ok) throw new Error(await parseErrorResponse(r, "Failed to get risk heatmap"));
+  return r.json();
+}
+
+// ---- Agent Introspection (#20) ----
+
+export async function getRunIntrospection(runId: string) {
+  const r = await fetchWithRetry(`${API_BASE}/runs/${runId}/introspection`, { cache: "no-store" });
+  if (!r.ok) throw new Error(await parseErrorResponse(r, "Failed to get introspection"));
+  return r.json();
+}
+
+// ---- Optimizer (#7) ----
+
+export async function getOptimizationEnvelope() {
+  const r = await fetchWithRetry(`${API_BASE}/optimizer/envelope`, { cache: "no-store" });
+  if (!r.ok) throw new Error(await parseErrorResponse(r, "Failed to get optimization envelope"));
+  return r.json();
+}
+
+export async function analyzeRunOptimization(runId: string) {
+  const r = await fetchWithRetry(`${API_BASE}/optimizer/analyze/${runId}`, { cache: "no-store" });
+  if (!r.ok) throw new Error(await parseErrorResponse(r, "Failed to analyze optimization"));
+  return r.json();
+}
+
+// ---- Adaptive Tuning (#12, #13) ----
+
+export async function getTuningRecommendations() {
+  const r = await fetchWithRetry(`${API_BASE}/tuning/recommendations`, { cache: "no-store" });
+  if (!r.ok) throw new Error(await parseErrorResponse(r, "Failed to get tuning recommendations"));
+  return r.json();
+}
+
+// ---- Integrity Monitor (#15) ----
+
+export async function checkRunIntegrity(runId: string) {
+  const r = await fetchWithRetry(`${API_BASE}/integrity/run/${runId}`, { cache: "no-store" });
+  if (!r.ok) throw new Error(await parseErrorResponse(r, "Failed to check integrity"));
+  return r.json();
+}
+
+export async function checkCrossRunIntegrity() {
+  const r = await fetchWithRetry(`${API_BASE}/integrity/cross-run`, { cache: "no-store" });
+  if (!r.ok) throw new Error(await parseErrorResponse(r, "Failed to check cross-run integrity"));
+  return r.json();
+}
+
+// ---- Agent Memory (#17, #18) ----
+
+export async function getAgentMemory(category?: string) {
+  const params = category ? `?category=${category}` : '';
+  const r = await fetchWithRetry(`${API_BASE}/agent/memory${params}`, { cache: "no-store" });
+  if (!r.ok) throw new Error(await parseErrorResponse(r, "Failed to get agent memory"));
+  return r.json();
+}
+
+export async function getAgentMemoryStats() {
+  const r = await fetchWithRetry(`${API_BASE}/agent/memory/stats`, { cache: "no-store" });
+  if (!r.ok) throw new Error(await parseErrorResponse(r, "Failed to get memory stats"));
+  return r.json();
+}
+
+export async function extractLessons(runId: string) {
+  const r = await fetchWithRetry(`${API_BASE}/agent/memory/learn/${runId}`, { method: "POST" });
+  if (!r.ok) throw new Error(await parseErrorResponse(r, "Failed to extract lessons"));
+  return r.json();
+}
+
+// ---- Policy Classification (#14) ----
+
+export async function getPolicyClassification() {
+  const r = await fetchWithRetry(`${API_BASE}/policies/classification`, { cache: "no-store" });
+  if (!r.ok) throw new Error(await parseErrorResponse(r, "Failed to get policy classification"));
+  return r.json();
+}

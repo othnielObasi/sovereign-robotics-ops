@@ -55,6 +55,7 @@ export function Map2D({
   showTrail = true,
   safetyState = "OK",
   hoveredWaypointIdx = null,
+  riskCells = [],
 }: {
   world: any | null;
   telemetry: any | null;
@@ -65,6 +66,7 @@ export function Map2D({
   showTrail?: boolean;
   safetyState?: string;
   hoveredWaypointIdx?: number | null;
+  riskCells?: Array<{ x: number; y: number; risk: number }>;
 }) {
   const ref = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -428,6 +430,29 @@ export function Map2D({
           if (risk < 0.05) continue;
           ctx.fillStyle = `rgba(239,68,68,${0.04 + 0.3 * risk})`;
           ctx.fillRect(px, py, g, g);
+        }
+      }
+
+      /* ── governance risk cells overlay (#21) ──────────────── */
+      if (riskCells && riskCells.length > 0) {
+        const gridPx = 2.0 * baseScale * zoom; // 2m grid cells
+        for (const cell of riskCells) {
+          const p = w2c({ x: cell.x, y: cell.y + 2.0 }); // top-left of cell
+          const p2 = w2c({ x: cell.x + 2.0, y: cell.y }); // bottom-right
+          const w = p2.x - p.x;
+          const h = p2.y - p.y;
+          const alpha = 0.08 + cell.risk * 0.35;
+          const r = cell.risk > 0.7 ? 239 : cell.risk > 0.4 ? 245 : 59;
+          const g2 = cell.risk > 0.7 ? 68 : cell.risk > 0.4 ? 158 : 130;
+          const b = cell.risk > 0.7 ? 68 : cell.risk > 0.4 ? 11 : 246;
+          ctx.fillStyle = `rgba(${r},${g2},${b},${alpha})`;
+          ctx.fillRect(p.x, p.y, w, h);
+          // Border
+          if (cell.risk > 0.3) {
+            ctx.strokeStyle = `rgba(${r},${g2},${b},${alpha * 1.5})`;
+            ctx.lineWidth = 0.5;
+            ctx.strokeRect(p.x, p.y, w, h);
+          }
         }
       }
     }
@@ -1028,7 +1053,7 @@ export function Map2D({
       ctx.textBaseline = "top";
       ctx.fillText(it.label, lx + 12, y);
     });
-  }, [world, telemetry, pathPoints, planWaypoints, baseScale, zoom, pan, showHeatmap, showTrail, safetyState, tick, pad, zones, obstacles, human, walkingHumans, idleRobots, bays, geo, W, H]);
+  }, [world, telemetry, pathPoints, planWaypoints, baseScale, zoom, pan, showHeatmap, showTrail, safetyState, tick, pad, zones, obstacles, human, walkingHumans, idleRobots, bays, geo, W, H, riskCells]);
 
   /* ── Minimap (when zoomed > 1.5x) ─────────────────────────── */
   useEffect(() => {

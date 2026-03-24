@@ -307,3 +307,175 @@ def get_run_scores(
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
     return compute_scorecard(db, run_id)
+
+
+@router.get("/runs/{run_id}/risk-heatmap")
+def get_risk_heatmap(
+    run_id: str,
+    grid_size: float = Query(2.0, ge=0.5, le=10.0, description="Grid cell size in meters"),
+    db: Session = Depends(get_db),
+):
+    """Compute spatial risk heatmap from governance decisions (#21).
+
+    Returns a grid of risk scores based on where denials and
+    high-risk decisions occurred during the run.
+    """
+    import json as _json
+    from app.db.models import GovernanceDecisionRecord
+    from app.world_model import GEOFENCE
+
+    run = db.query(Run).filter(Run.id == run_id).first()
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+
+    decisions = (
+        db.query(GovernanceDecisionRecord)
+        .filter(GovernanceDecisionRecord.run_id == run_id)
+        .all()
+    )
+
+    min_x = GEOFENCE["min_x"]
+    max_x = GEOFENCE["max_x"]
+    min_y = GEOFENCE["min_y"]
+    max_y = GEOFENCE["max_y"]
+
+    # Build grid
+    cols = int((max_x - min_x) / grid_size) + 1
+    rows = int((max_y - min_y) / grid_size) + 1
+    grid = [[0.0] * cols for _ in range(rows)]
+    counts = [[0] * cols for _ in range(rows)]
+
+    for d in decisions:
+        try:
+            tel = _json.loads(d.telemetry_summary or "{}")
+            x = float(tel.get("x", 0))
+            y = float(tel.get("y", 0))
+            col = int((x - min_x) / grid_size)
+            row = int((y - min_y) / grid_size)
+            if 0 <= row < rows and 0 <= col < cols:
+                # Weight: denials=1.0, needs_review=0.7, approved=0.1
+                weight = 1.0 if d.decision == "DENIED" else (0.7 if d.decision == "NEEDS_REVIEW" else 0.1)
+                grid[row][col] += d.risk_score * weight
+                counts[row][col] += 1
+        except Exception:
+            continue
+
+    # Normalize to 0-1
+    max_val = max(max(row) for row in grid) if grid else 1.0
+    if max_val > 0:
+        grid = [[cell / max_val for cell in row] for row in grid]
+
+    # Build cell list for frontend
+    cells = []
+    for r in range(rows):
+        for c in range(cols):
+            if grid[r][c] > 0.05:  # skip near-zero cells
+                cells.append({
+                    "x": round(min_x + c * grid_size, 1),
+                    "y": round(min_y + r * grid_size, 1),
+                    "risk": round(grid[r][c], 3),
+                    "decisions": counts[r][c],
+                })
+
+    return {
+        "run_id": run_id,
+        "grid_size": grid_size,
+        "bounds": {"min_x": min_x, "max_x": max_x, "min_y": min_y, "max_y": max_y},
+        "cells": cells,
+        "total_decisions": len(decisions),
+    }
+
+
+@router.get("/runs/{run_id}/introspection")
+def get_run_introspection(
+    run_id: str,
+    db: Session = Depends(get_db),
+):
+    """Agent introspection: thought chains, denial history, memory recalls (#20)."""
+    import json as _json
+
+    run = db.query(Run).filter(Run.id == run_id).first()
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+
+    # Gather DECISION events for thought chain
+    decision_events = (
+        db.query(Event)
+        .filter(Event.run_id == run_id, Event.type == "DECISION")
+        .order_by(Event.ts.asc())
+        .all()
+    )
+
+    # Gather REPLAN events
+    replan_events = (
+        db.query(Event)
+        .filter(Event.run_id == run_id, Event.type == "REPLAN")
+        .order_by(Event.ts.asc())
+        .all()
+    )
+
+    # Gather PLAN events
+    plan_events = (
+        db.query(Event)
+        .filter(Event.run_id == run_id, Event.type == "PLAN")
+        .order_by(Event.ts.asc())
+        .all()
+    )
+
+    # Build denial history
+    from app.db.models import GovernanceDecisionRecord
+    denials = (
+        db.query(GovernanceDecisionRecord)
+        .filter(
+            GovernanceDecisionRecord.run_id == run_id,
+            GovernanceDecisionRecord.decision.in_(["DENIED", "NEEDS_REVIEW"]),
+        )
+        .order_by(GovernanceDecisionRecord.ts.asc())
+        .all()
+    )
+
+    denial_history = []
+    for d in denials:
+        denial_history.append({
+            "ts": d.ts.isoformat() if d.ts else None,
+            "decision": d.decision,
+            "policy_hits": _json.loads(d.policy_hits or "[]"),
+            "reasons": _json.loads(d.reasons or "[]"),
+            "risk_score": d.risk_score,
+            "policy_state": d.policy_state,
+        })
+
+    # Memory context
+    try:
+        from app.services.persistent_memory import PersistentMemory
+        mem = PersistentMemory()
+        memory_context = mem.recall_for_context(db)
+        memory_stats = mem.get_stats(db)
+    except Exception:
+        memory_context = "Memory unavailable"
+        memory_stats = {}
+
+    return {
+        "run_id": run_id,
+        "total_decisions": len(decision_events),
+        "total_replans": len(replan_events),
+        "total_plans": len(plan_events),
+        "denial_count": len(denials),
+        "denial_history": denial_history[:50],
+        "replans": [
+            {
+                "ts": e.ts.isoformat() if e.ts else None,
+                "payload": _json.loads(e.payload_json),
+            }
+            for e in replan_events
+        ],
+        "plans": [
+            {
+                "ts": e.ts.isoformat() if e.ts else None,
+                "payload": _json.loads(e.payload_json),
+            }
+            for e in plan_events
+        ],
+        "memory_context": memory_context,
+        "memory_stats": memory_stats,
+    }

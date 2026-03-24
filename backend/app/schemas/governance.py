@@ -20,6 +20,8 @@ class GovernanceDecision(BaseModel):
     required_action: Optional[str] = None
     risk_score: float = 0.0
     policy_state: Literal["SAFE", "SLOW", "STOP", "REPLAN"] = "SAFE"
+    hard_fail: bool = False
+    hard_fail_policies: List[str] = Field(default_factory=list)
 
 
 class PolicyInfo(BaseModel):

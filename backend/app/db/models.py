@@ -116,3 +116,19 @@ class OperatorApproval(Base):
     notes = Column(Text, nullable=True)
 
     run = relationship("Run", back_populates="operator_approvals")
+
+
+class AgentMemoryEntry(Base):
+    """Persistent agent memory — survives across runs and restarts."""
+    __tablename__ = "agent_memory"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    run_id = Column(String, index=True, nullable=True)
+    category = Column(String, index=True, nullable=False)  # decision|denial|learning|strategy
+    ts = Column(DateTime(timezone=True), nullable=False)
+    content_json = Column(Text, nullable=False)
+    importance = Column(Float, nullable=False, default=0.5)
+
+    __table_args__ = (
+        Index("ix_agent_memory_cat_importance", "category", "importance"),
+    )

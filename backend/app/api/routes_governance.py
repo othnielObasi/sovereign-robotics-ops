@@ -142,3 +142,128 @@ def get_policy_version():
     from app.policies.versioning import policy_version_info
 
     return policy_version_info()
+
+
+# ── Governance-bounded optimizer (#7) ──
+
+@router.get("/optimizer/envelope")
+def get_optimization_envelope():
+    """Return the governance envelope — hard safety bounds the optimizer respects."""
+    from app.services.optimizer import get_optimization_envelope
+
+    return get_optimization_envelope()
+
+
+@router.get("/optimizer/analyze/{run_id}")
+def analyze_run_optimization(run_id: str):
+    """Analyse a run and produce governance-bounded optimization recommendations."""
+    from app.services.optimizer import analyze_run_performance
+
+    db = SessionLocal()
+    try:
+        return analyze_run_performance(db, run_id)
+    finally:
+        db.close()
+
+
+# ── Adaptive tuning (#12, #13) ──
+
+@router.get("/tuning/recommendations")
+def get_tuning_recommendations():
+    """Analyse historical runs and produce safe parameter tuning recommendations."""
+    from app.services.adaptive_tuning import compute_tuning_recommendations
+
+    db = SessionLocal()
+    try:
+        return compute_tuning_recommendations(db)
+    finally:
+        db.close()
+
+
+# ── Anti-reward-hacking integrity monitor (#15) ──
+
+@router.get("/integrity/run/{run_id}")
+def check_run_integrity(run_id: str):
+    """Check a run's scorecard for reward-hacking indicators."""
+    from app.services.integrity_monitor import check_run_integrity
+
+    db = SessionLocal()
+    try:
+        return check_run_integrity(db, run_id)
+    finally:
+        db.close()
+
+
+@router.get("/integrity/cross-run")
+def check_cross_run_integrity(limit: int = Query(10, ge=3, le=50)):
+    """Analyse trends across multiple runs for systemic gaming patterns."""
+    from app.services.integrity_monitor import check_cross_run_integrity
+
+    db = SessionLocal()
+    try:
+        return check_cross_run_integrity(db, limit=limit)
+    finally:
+        db.close()
+
+
+# ── Persistent agent memory (#17, #18) ──
+
+@router.get("/agent/memory")
+def get_agent_memory(
+    category: Optional[str] = Query(None, description="Filter: decision|denial|learning|strategy"),
+    limit: int = Query(30, ge=1, le=200),
+):
+    """Retrieve persistent agent memory entries."""
+    from app.services.persistent_memory import PersistentMemory
+
+    db = SessionLocal()
+    try:
+        mem = PersistentMemory()
+        return mem.recall(db, category=category, limit=limit)
+    finally:
+        db.close()
+
+
+@router.get("/agent/memory/stats")
+def get_agent_memory_stats():
+    """Get agent memory statistics."""
+    from app.services.persistent_memory import PersistentMemory
+
+    db = SessionLocal()
+    try:
+        mem = PersistentMemory()
+        return mem.stats(db) if hasattr(mem, 'stats') else mem.get_stats(db)
+    finally:
+        db.close()
+
+
+@router.post("/agent/memory/learn/{run_id}")
+def extract_lessons(run_id: str):
+    """Extract internalized lessons from a completed run (#18)."""
+    from app.services.persistent_memory import PersistentMemory
+
+    db = SessionLocal()
+    try:
+        mem = PersistentMemory()
+        lessons = mem.extract_lessons_from_run(db, run_id)
+        db.commit()
+        return {"run_id": run_id, "lessons_extracted": len(lessons), "lessons": lessons}
+    finally:
+        db.close()
+
+
+# ── Policy hard-failure classification (#14) ──
+
+@router.get("/policies/classification")
+def get_policy_classification():
+    """Return the hard-fail vs soft-fail classification of all policies."""
+    from app.policies.rules_python import HARD_FAIL_POLICIES, SOFT_FAIL_POLICIES
+
+    return {
+        "hard_fail": sorted(HARD_FAIL_POLICIES),
+        "soft_fail": sorted(SOFT_FAIL_POLICIES),
+        "description": {
+            "hard_fail": "Immediate DENIED, no operator override possible",
+            "soft_fail": "Can be DENIED or upgraded to NEEDS_REVIEW for operator decision",
+        },
+    }

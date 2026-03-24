@@ -19,6 +19,22 @@ HUMAN_STOP_RADIUS_M = 1.0   # full stop when human within this range
 
 REVIEW_RISK_THRESHOLD = 0.75
 
+# --- Hard vs Soft failure classification (#14) ---
+# HARD failures: immediate DENIED, no override possible, no upgrade to NEEDS_REVIEW
+# SOFT failures: can be DENIED or upgraded to NEEDS_REVIEW for operator decision
+HARD_FAIL_POLICIES = frozenset({
+    "GEOFENCE_01",          # Outside operating boundary — absolute safety limit
+    "HUMAN_PROXIMITY_02",   # Human within stop radius — must stop immediately
+    "WORKER_PROXIMITY_06",  # Worker within stop radius — must stop immediately
+    "OBSTACLE_CLEARANCE_03",  # Collision imminent — hard stop
+})
+SOFT_FAIL_POLICIES = frozenset({
+    "SAFE_SPEED_01",        # Speed violation — can slow down
+    "HUMAN_CLEARANCE_02",   # Near human — reduce speed
+    "UNCERTAINTY_04",       # Low confidence — proceed cautiously
+    "HITL_05",              # High risk threshold — operator review
+})
+
 
 def evaluate_policies(telemetry: Dict[str, Any], proposal: ActionProposal) -> GovernanceDecision:
     """Evaluate a proposal against a small policy set.
@@ -156,10 +172,28 @@ def evaluate_policies(telemetry: Dict[str, Any], proposal: ActionProposal) -> Go
         policy_hits.append("HITL_05")
         reasons.append(f"Risk score {risk_score:.2f} exceeds review threshold {REVIEW_RISK_THRESHOLD:.2f}; human review required.")
 
-    # Decision logic
+    # Decision logic — with hard vs soft failure classification (#14)
     if policy_hits:
-        # If high risk, request review rather than simple denial for demo richness
-        if risk_score >= REVIEW_RISK_THRESHOLD and "GEOFENCE_01" not in policy_hits:
+        # Check if any hard-fail policies triggered
+        has_hard_fail = any(p in HARD_FAIL_POLICIES for p in policy_hits)
+        hard_policies = [p for p in policy_hits if p in HARD_FAIL_POLICIES]
+        soft_policies = [p for p in policy_hits if p in SOFT_FAIL_POLICIES]
+
+        if has_hard_fail:
+            # Hard failure: always DENIED, no operator override possible
+            return GovernanceDecision(
+                decision="DENIED",
+                policy_hits=policy_hits,
+                reasons=reasons,
+                required_action=required_action,
+                risk_score=risk_score,
+                policy_state=policy_state,
+                hard_fail=True,
+                hard_fail_policies=hard_policies,
+            )
+
+        # Soft failure: can be upgraded to NEEDS_REVIEW for operator review
+        if risk_score >= REVIEW_RISK_THRESHOLD:
             return GovernanceDecision(
                 decision="NEEDS_REVIEW",
                 policy_hits=policy_hits,
@@ -167,6 +201,8 @@ def evaluate_policies(telemetry: Dict[str, Any], proposal: ActionProposal) -> Go
                 required_action=required_action,
                 risk_score=risk_score,
                 policy_state=policy_state,
+                hard_fail=False,
+                hard_fail_policies=[],
             )
         return GovernanceDecision(
             decision="DENIED",
@@ -175,6 +211,8 @@ def evaluate_policies(telemetry: Dict[str, Any], proposal: ActionProposal) -> Go
             required_action=required_action,
             risk_score=risk_score,
             policy_state=policy_state,
+            hard_fail=False,
+            hard_fail_policies=[],
         )
 
     return GovernanceDecision(
@@ -184,4 +222,6 @@ def evaluate_policies(telemetry: Dict[str, Any], proposal: ActionProposal) -> Go
         required_action=None,
         risk_score=risk_score,
         policy_state="SAFE",
+        hard_fail=False,
+        hard_fail_policies=[],
     )

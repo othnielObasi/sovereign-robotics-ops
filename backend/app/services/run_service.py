@@ -457,6 +457,22 @@ class RunService:
                     # Record outcome in agent memory (agentic mode)
                     self.agent.record_outcome(proposal, gov_decision, was_executed)
 
+                    # Persist decision in DB-backed memory (#17)
+                    try:
+                        from app.services.persistent_memory import PersistentMemory
+                        pmem = PersistentMemory()
+                        pmem.store_decision(
+                            db, run_id,
+                            proposal.intent,
+                            proposal.params or {},
+                            gov_decision.decision,
+                            gov_decision.policy_hits,
+                            gov_decision.reasons,
+                            was_executed,
+                        )
+                    except Exception:
+                        pass  # non-critical
+
                     # Commit events/telemetry
                     db.commit()
 
@@ -500,6 +516,15 @@ class RunService:
                         # Also mark the parent mission as completed
                         if mission:
                             mission.status = "completed"
+
+                        # Extract lessons from completed run (#18)
+                        try:
+                            from app.services.persistent_memory import PersistentMemory
+                            pmem = PersistentMemory()
+                            pmem.extract_lessons_from_run(db, run_id)
+                        except Exception:
+                            pass
+
                         db.commit()
                         if self._ws_broadcast:
                             await self._ws_broadcast(run_id, {"kind": "status", "data": {"status": "completed"}})
