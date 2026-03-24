@@ -365,9 +365,9 @@ class RunService:
                         except Exception:
                             pass
 
-                    # NOTE: telemetry broadcast moved AFTER governance decision
-                    # so UI shows robot position update only after the decision is
-                    # visible — prevents "robot moves before governance" perception.
+                    # Stream telemetry
+                    if self._ws_broadcast:
+                        await self._ws_broadcast(run_id, {"kind": "telemetry", "data": telemetry})
 
                     # Simple alerting (MVP): forward simulator events
                     sim_events = telemetry.get("events") or []
@@ -582,10 +582,6 @@ class RunService:
                                 "executed_path_len": len(self._executed_paths.get(run_id, [])),
                             }
                         })
-
-                        # Broadcast telemetry AFTER decision so UI shows position
-                        # update only after governance is visible
-                        await self._ws_broadcast(run_id, {"kind": "telemetry", "data": telemetry})
 
                     last_governance = gov_payload
 
