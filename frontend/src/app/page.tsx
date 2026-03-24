@@ -3,7 +3,7 @@
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { listMissions, createMission, startRun, listRuns } from "@/lib/api";
+import { listMissions, createMission, startRun, listRuns, getScoreTrends, getCrossRunLearning, getTuningRecommendations, checkCrossRunIntegrity, getOptimizationEnvelope } from "@/lib/api";
 import type { Mission, MissionStatus } from "@/lib/types";
 
 // API configuration
@@ -47,6 +47,13 @@ export default function HomePage() {
   const [goalY, setGoalY] = useState(7);
   const [creating, setCreating] = useState(false);
   const [missionRunIds, setMissionRunIds] = useState<Record<string, string>>({});
+
+  // Phase E: Analytics data
+  const [scoreTrends, setScoreTrends] = useState<any[]>([]);
+  const [crossRunLearning, setCrossRunLearning] = useState<any>(null);
+  const [tuningRecs, setTuningRecs] = useState<any>(null);
+  const [crossRunIntegrity, setCrossRunIntegrity] = useState<any>(null);
+  const [optimizationEnvelope, setOptimizationEnvelope] = useState<any>(null);
 
   // Check API health
   useEffect(() => {
@@ -110,6 +117,18 @@ export default function HomePage() {
     }
     
     fetchMissions();
+  }, [status.api]);
+
+  // Phase E: Fetch analytics when connected
+  useEffect(() => {
+    if (status.api !== 'connected') return;
+    (async () => {
+      try { setScoreTrends((await getScoreTrends(20)).trends || []); } catch (_) {}
+      try { setCrossRunLearning(await getCrossRunLearning()); } catch (_) {}
+      try { setTuningRecs(await getTuningRecommendations()); } catch (_) {}
+      try { setCrossRunIntegrity(await checkCrossRunIntegrity()); } catch (_) {}
+      try { setOptimizationEnvelope(await getOptimizationEnvelope()); } catch (_) {}
+    })();
   }, [status.api]);
 
   // Create mission
@@ -399,6 +418,158 @@ export default function HomePage() {
           </div>
         )}
       </div>
+
+      {/* Phase E: Analytics & Governance Dashboard */}
+      {status.api === 'connected' && (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mt-8">
+          {/* Score Trends (#10) */}
+          <div className="bg-slate-800 rounded-xl p-6 border border-slate-700">
+            <h2 className="text-lg font-semibold mb-4">📈 Score Trends</h2>
+            {scoreTrends.length === 0 ? (
+              <div className="text-slate-400 text-sm text-center py-4">No trend data yet. Complete some runs.</div>
+            ) : (
+              <div className="space-y-2">
+                {scoreTrends.slice(0, 8).map((t: any, i: number) => (
+                  <div key={i} className="flex items-center gap-2">
+                    <span className="text-[10px] text-slate-500 font-mono w-20 truncate">{t.run_id?.slice(0, 8) || `Run ${i+1}`}</span>
+                    <div className="flex-1 h-2 bg-slate-700 rounded-full overflow-hidden">
+                      <div className={`h-full rounded-full ${(t.composite ?? t.score ?? 0) > 0.7 ? "bg-green-500" : (t.composite ?? t.score ?? 0) > 0.4 ? "bg-yellow-500" : "bg-red-500"}`}
+                        style={{ width: `${((t.composite ?? t.score ?? 0) * 100)}%` }} />
+                    </div>
+                    <span className="text-[10px] font-mono text-slate-400 w-10 text-right">{((t.composite ?? t.score ?? 0) * 100).toFixed(0)}%</span>
+                  </div>
+                ))}
+                {scoreTrends.length > 8 && <div className="text-[10px] text-slate-500 text-center">+{scoreTrends.length - 8} more runs</div>}
+              </div>
+            )}
+          </div>
+
+          {/* Cross-Run Learning (#18) */}
+          <div className="bg-slate-800 rounded-xl p-6 border border-slate-700">
+            <h2 className="text-lg font-semibold mb-4">🧠 Cross-Run Learning</h2>
+            {!crossRunLearning ? (
+              <div className="text-slate-400 text-sm text-center py-4">Loading learning data...</div>
+            ) : (
+              <div className="space-y-3">
+                {crossRunLearning.lessons?.length > 0 ? (
+                  crossRunLearning.lessons.slice(0, 5).map((l: any, i: number) => (
+                    <div key={i} className="text-xs bg-purple-500/10 border border-purple-500/20 rounded px-3 py-2 text-purple-200">
+                      {typeof l === "string" ? l : l.content || l.lesson || JSON.stringify(l)}
+                    </div>
+                  ))
+                ) : (
+                  <div className="text-slate-400 text-sm text-center py-2">No lessons extracted yet</div>
+                )}
+                {crossRunLearning.pattern_summary && (
+                  <div className="text-[10px] text-slate-400 bg-slate-900/60 rounded p-2">{crossRunLearning.pattern_summary}</div>
+                )}
+                {crossRunLearning.runs_analyzed != null && (
+                  <div className="text-[10px] text-slate-500">{crossRunLearning.runs_analyzed} runs analyzed</div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* System Integrity (#15) */}
+          <div className="bg-slate-800 rounded-xl p-6 border border-slate-700">
+            <h2 className="text-lg font-semibold mb-4">🔒 System Integrity</h2>
+            {!crossRunIntegrity ? (
+              <div className="text-slate-400 text-sm text-center py-4">Checking integrity...</div>
+            ) : (
+              <div className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <span className={`text-xs font-bold px-3 py-1 rounded-full border ${
+                    crossRunIntegrity.verdict === "CLEAN" ? "bg-green-500/15 text-green-400 border-green-500/30" :
+                    crossRunIntegrity.verdict === "FLAGGED" ? "bg-yellow-500/15 text-yellow-400 border-yellow-500/30" :
+                    "bg-red-500/15 text-red-400 border-red-500/30"
+                  }`}>
+                    {crossRunIntegrity.verdict === "CLEAN" ? "✓ All Clean" : crossRunIntegrity.verdict || "Unknown"}
+                  </span>
+                  {crossRunIntegrity.runs_checked != null && (
+                    <span className="text-[10px] text-slate-500">{crossRunIntegrity.runs_checked} runs checked</span>
+                  )}
+                </div>
+                {crossRunIntegrity.flagged_runs?.length > 0 && (
+                  <div className="space-y-1">
+                    {crossRunIntegrity.flagged_runs.map((r: any, i: number) => (
+                      <div key={i} className="text-[10px] bg-yellow-500/10 border border-yellow-500/20 rounded px-2 py-1 text-yellow-300">
+                        Run {r.run_id?.slice(0, 8)}: {r.issue || "flagged"}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {crossRunIntegrity.anomalies?.length > 0 && (
+                  <div className="space-y-1">
+                    {crossRunIntegrity.anomalies.map((a: any, i: number) => (
+                      <div key={i} className="text-[10px] text-red-300 bg-red-500/10 rounded px-2 py-1">{a}</div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Tuning Recommendations (#12, #13) */}
+          <div className="bg-slate-800 rounded-xl p-6 border border-slate-700">
+            <h2 className="text-lg font-semibold mb-4">🎛️ Tuning Recommendations</h2>
+            {!tuningRecs ? (
+              <div className="text-slate-400 text-sm text-center py-4">Loading tuning data...</div>
+            ) : (
+              <div className="space-y-2">
+                {tuningRecs.recommendations?.length > 0 ? (
+                  tuningRecs.recommendations.slice(0, 5).map((r: any, i: number) => (
+                    <div key={i} className="text-xs bg-cyan-500/10 border border-cyan-500/20 rounded px-3 py-2 text-cyan-200">
+                      {typeof r === "string" ? r : (
+                        <div>
+                          <span className="font-semibold">{r.parameter || r.name}</span>: {r.suggestion || r.value || r.description}
+                        </div>
+                      )}
+                    </div>
+                  ))
+                ) : (
+                  <div className="text-slate-400 text-sm text-center py-2">No recommendations available</div>
+                )}
+                {tuningRecs.confidence != null && (
+                  <div className="text-[10px] text-slate-500">Confidence: {(tuningRecs.confidence * 100).toFixed(0)}%</div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Optimization Envelope (#7) */}
+          <div className="bg-slate-800 rounded-xl p-6 border border-slate-700">
+            <h2 className="text-lg font-semibold mb-4">📊 Optimization Envelope</h2>
+            {!optimizationEnvelope ? (
+              <div className="text-slate-400 text-sm text-center py-4">Loading optimization data...</div>
+            ) : (
+              <div className="space-y-2">
+                {optimizationEnvelope.speed_range && (
+                  <div className="flex justify-between text-xs">
+                    <span className="text-slate-500">Speed Range</span>
+                    <span className="text-slate-300 font-mono">{optimizationEnvelope.speed_range.min?.toFixed(2)} – {optimizationEnvelope.speed_range.max?.toFixed(2)} m/s</span>
+                  </div>
+                )}
+                {optimizationEnvelope.safety_margin != null && (
+                  <div className="flex justify-between text-xs">
+                    <span className="text-slate-500">Safety Margin</span>
+                    <span className="text-slate-300 font-mono">{optimizationEnvelope.safety_margin?.toFixed?.(2) || optimizationEnvelope.safety_margin}m</span>
+                  </div>
+                )}
+                {optimizationEnvelope.constraints && (
+                  <div className="text-[10px] text-slate-500 space-y-0.5 mt-1">
+                    {Object.entries(optimizationEnvelope.constraints).map(([k, v]) => (
+                      <div key={k} className="flex justify-between">
+                        <span>{k.replace(/_/g, " ")}</span>
+                        <span className="font-mono text-slate-400">{String(v)}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

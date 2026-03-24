@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { getRun, listEvents, stopRun, getWorld, getTelemetry, getPathPreview, triggerScenario, generateLLMPlan, executeLLMPlan, analyzeScene, analyzeTelemetry, detectFailures, agenticPropose, getMission, getRiskHeatmap } from "@/lib/api";
+import { getRun, listEvents, stopRun, getWorld, getTelemetry, getPathPreview, triggerScenario, generateLLMPlan, executeLLMPlan, analyzeScene, analyzeTelemetry, detectFailures, agenticPropose, getMission, getRiskHeatmap, getExecutedPath, getRunSafetyReport, getDivergenceExplanation, analyzeRunOptimization } from "@/lib/api";
 import { Map2D } from "@/components/Map2D";
 import { ScoreCard } from "@/components/ScoreCard";
 import { IntrospectionPanel } from "@/components/IntrospectionPanel";
@@ -142,6 +142,13 @@ export default function RunPage({ params }: { params: { runId: string } }) {
   // Active waypoint tracking during execution
   const [activeWaypointIdx, setActiveWaypointIdx] = useState<number>(-1);
 
+  // Phase E: Executed path overlay + safety report + divergence + optimization
+  const [executedPathData, setExecutedPathData] = useState<Array<{x:number;y:number}>>([]);
+  const [destinationBayId, setDestinationBayId] = useState<string | null>(null);
+  const [safetyReport, setSafetyReport] = useState<any>(null);
+  const [divergenceExplanation, setDivergenceExplanation] = useState<any>(null);
+  const [optimizationAnalysis, setOptimizationAnalysis] = useState<any>(null);
+
   async function refreshEvents() {
     try {
       const rows = await listEvents(runId);
@@ -167,6 +174,9 @@ export default function RunPage({ params }: { params: { runId: string } }) {
       } catch (_) {}
       try { setWorld(await getWorld()); } catch (_) {}
       try { setTelemetry(await getTelemetry()); } catch (_) {}
+      // Phase E: fetch safety report + optimization
+      try { setSafetyReport(await getRunSafetyReport(runId)); } catch (_) {}
+      try { setOptimizationAnalysis(await analyzeRunOptimization(runId)); } catch (_) {}
       await refreshEvents();
     })();
   }, [runId]);
@@ -233,6 +243,11 @@ export default function RunPage({ params }: { params: { runId: string } }) {
       try {
         const hm = await getRiskHeatmap(runId);
         setRiskCells(hm.cells || []);
+      } catch (_) {}
+      try {
+        const ep = await getExecutedPath(runId);
+        setExecutedPathData(ep.points || []);
+        if (ep.destination_bay_id) setDestinationBayId(ep.destination_bay_id);
       } catch (_) {}
     }
     tick();
@@ -539,7 +554,7 @@ export default function RunPage({ params }: { params: { runId: string } }) {
               </div>
             </div>
             <div className="min-h-[450px]">
-              <Map2D world={world} telemetry={telemetry} pathPoints={pathPoints} planWaypoints={llmPlan?.waypoints || null} missionGoal={resolveBayGoal(missionInstruction, world?.bays || []) || mission?.goal || null} showHeatmap={showHeatmap} showTrail={showTrail} safetyState={safety.state} hoveredWaypointIdx={hoveredWaypointIdx} riskCells={riskCells} />
+              <Map2D world={world} telemetry={telemetry} pathPoints={pathPoints} planWaypoints={llmPlan?.waypoints || null} missionGoal={resolveBayGoal(missionInstruction, world?.bays || []) || mission?.goal || null} showHeatmap={showHeatmap} showTrail={showTrail} safetyState={safety.state} hoveredWaypointIdx={hoveredWaypointIdx} riskCells={riskCells} executedPath={executedPathData} destinationBayId={destinationBayId} />
             </div>
             {/* Map Legend */}
             <div className="flex items-center gap-3 mt-2 px-1 flex-wrap">
@@ -549,6 +564,7 @@ export default function RunPage({ params }: { params: { runId: string } }) {
               <span className="flex items-center gap-1 text-[10px] text-slate-400"><span className="w-2.5 h-2.5 rounded-full bg-purple-400 inline-block" /> Plan</span>
               <span className="flex items-center gap-1 text-[10px] text-slate-400"><span className="w-2.5 h-2.5 rounded-full bg-emerald-400 inline-block" /> Goal</span>
               <span className="flex items-center gap-1 text-[10px] text-slate-400"><span className="w-2.5 h-2.5 rounded-full bg-blue-400 inline-block" /> Path</span>
+              <span className="flex items-center gap-1 text-[10px] text-slate-400"><span className="w-2.5 h-2.5 rounded-full bg-green-500 inline-block" /> Executed</span>
               <span className="flex items-center gap-1 text-[10px] text-slate-400"><span className="w-2.5 h-2.5 rounded-sm bg-red-400/50 inline-block" /> Risk Zone</span>
               <span className="text-[10px] text-slate-600 ml-auto">Scroll to zoom · Drag to pan</span>
             </div>
@@ -1097,6 +1113,117 @@ export default function RunPage({ params }: { params: { runId: string } }) {
           {/* Agent Introspection (#20) */}
           <CollapsibleCard title="🔍 Agent Introspection" defaultOpen={false}>
             <IntrospectionPanel runId={runId} />
+          </CollapsibleCard>
+
+          {/* Safety Report (#14) */}
+          <CollapsibleCard title="🛡️ Safety Report" defaultOpen={false}>
+            {!safetyReport ? (
+              <div className="text-xs text-slate-500 text-center py-2">No safety report yet</div>
+            ) : (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className={`text-xs font-bold px-2 py-1 rounded-full border ${
+                    safetyReport.verdict === "PASS" ? "bg-green-500/15 text-green-400 border-green-500/30" :
+                    safetyReport.verdict === "FAIL" ? "bg-red-500/15 text-red-400 border-red-500/30" :
+                    "bg-yellow-500/15 text-yellow-400 border-yellow-500/30"
+                  }`}>
+                    {safetyReport.verdict === "PASS" ? "✓ PASS" : safetyReport.verdict === "FAIL" ? "✗ FAIL" : "⚠ " + (safetyReport.verdict || "N/A")}
+                  </span>
+                  <span className="text-[10px] text-slate-500">{safetyReport.checks_run || 0} checks</span>
+                </div>
+                {safetyReport.violations?.length > 0 && (
+                  <div className="space-y-1">
+                    {safetyReport.violations.map((v: any, i: number) => (
+                      <div key={i} className="text-[10px] bg-red-500/10 border border-red-500/20 rounded px-2 py-1 text-red-300">
+                        <span className="font-bold">{v.check || v.name}</span>: {v.detail || v.message || "threshold exceeded"}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {safetyReport.thresholds && (
+                  <div className="text-[10px] text-slate-500 space-y-0.5">
+                    {Object.entries(safetyReport.thresholds).map(([k, v]) => (
+                      <div key={k} className="flex justify-between">
+                        <span>{k.replace(/_/g, " ")}</span>
+                        <span className="font-mono text-slate-400">{String(v)}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {safetyReport.summary && <div className="text-[10px] text-slate-400 bg-slate-900/60 rounded p-2">{safetyReport.summary}</div>}
+              </div>
+            )}
+          </CollapsibleCard>
+
+          {/* Optimization Analysis (#7) */}
+          <CollapsibleCard title="⚡ Optimization Analysis" defaultOpen={false}>
+            {!optimizationAnalysis ? (
+              <div className="text-xs text-slate-500 text-center py-2">No optimization data</div>
+            ) : (
+              <div className="space-y-2">
+                {optimizationAnalysis.efficiency_score != null && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] text-slate-500">Efficiency:</span>
+                    <div className="flex-1 h-1.5 bg-slate-700 rounded-full overflow-hidden">
+                      <div className={`h-full rounded-full ${optimizationAnalysis.efficiency_score > 0.7 ? "bg-green-500" : optimizationAnalysis.efficiency_score > 0.4 ? "bg-yellow-500" : "bg-red-500"}`}
+                        style={{ width: `${(optimizationAnalysis.efficiency_score * 100)}%` }} />
+                    </div>
+                    <span className="text-[10px] font-mono text-slate-400">{(optimizationAnalysis.efficiency_score * 100).toFixed(0)}%</span>
+                  </div>
+                )}
+                {optimizationAnalysis.path_length != null && (
+                  <div className="flex justify-between text-[10px]">
+                    <span className="text-slate-500">Path length</span>
+                    <span className="text-slate-300 font-mono">{optimizationAnalysis.path_length?.toFixed?.(1) || optimizationAnalysis.path_length}m</span>
+                  </div>
+                )}
+                {optimizationAnalysis.time_elapsed != null && (
+                  <div className="flex justify-between text-[10px]">
+                    <span className="text-slate-500">Time elapsed</span>
+                    <span className="text-slate-300 font-mono">{optimizationAnalysis.time_elapsed?.toFixed?.(1) || optimizationAnalysis.time_elapsed}s</span>
+                  </div>
+                )}
+                {optimizationAnalysis.recommendations?.length > 0 && (
+                  <div className="space-y-1 mt-1">
+                    <div className="text-[10px] text-slate-500 font-semibold">Recommendations</div>
+                    {optimizationAnalysis.recommendations.map((r: string, i: number) => (
+                      <div key={i} className="text-[10px] bg-cyan-500/10 border border-cyan-500/20 rounded px-2 py-1 text-cyan-300">{r}</div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </CollapsibleCard>
+
+          {/* Divergence Explanation (#20) */}
+          <CollapsibleCard title="🔀 Divergence Explanation" defaultOpen={false}>
+            <div className="space-y-2">
+              {divergenceExplanation ? (
+                <>
+                  {divergenceExplanation.divergence_detected != null && (
+                    <span className={`text-[10px] font-bold px-2 py-1 rounded-full border ${
+                      divergenceExplanation.divergence_detected ? "bg-yellow-500/15 text-yellow-400 border-yellow-500/30" : "bg-green-500/15 text-green-400 border-green-500/30"
+                    }`}>
+                      {divergenceExplanation.divergence_detected ? "⚠ Divergence Detected" : "✓ On Track"}
+                    </span>
+                  )}
+                  {divergenceExplanation.explanation && (
+                    <div className="text-[10px] text-slate-300 bg-slate-900/60 rounded p-2 whitespace-pre-wrap">{divergenceExplanation.explanation}</div>
+                  )}
+                  {divergenceExplanation.max_deviation != null && (
+                    <div className="flex justify-between text-[10px]">
+                      <span className="text-slate-500">Max deviation</span>
+                      <span className="font-mono text-slate-300">{divergenceExplanation.max_deviation?.toFixed?.(2) || divergenceExplanation.max_deviation}m</span>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <button onClick={async () => { try { setDivergenceExplanation(await getDivergenceExplanation(runId)); } catch (_) {} }}
+                  className="w-full text-[10px] font-semibold px-3 py-1.5 rounded-lg border border-blue-500/30 bg-blue-500/10 text-blue-300 hover:bg-blue-500/20 transition">
+                  Analyze Path Divergence
+                </button>
+              )}
+            </div>
           </CollapsibleCard>
         </div>
       </div>

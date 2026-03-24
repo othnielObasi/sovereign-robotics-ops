@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useState, useCallback } from "react";
-import { listPolicies, testPolicy } from "@/lib/api";
+import { listPolicies, testPolicy, getPolicyVersions, getPolicyClassification, runAdversarialValidation } from "@/lib/api";
 
 interface Policy {
   policy_id: string;
@@ -55,6 +55,12 @@ export default function PoliciesPage() {
   const [err, setErr] = useState<string | null>(null);
   const [testing, setTesting] = useState(false);
 
+  // Phase E: policy versions, classification, adversarial
+  const [policyVersions, setPolicyVersions] = useState<any[]>([]);
+  const [policyClassification, setPolicyClassification] = useState<any>(null);
+  const [adversarialResults, setAdversarialResults] = useState<any>(null);
+  const [adversarialLoading, setAdversarialLoading] = useState(false);
+
   useEffect(() => {
     (async () => {
       try {
@@ -64,6 +70,9 @@ export default function PoliciesPage() {
       } finally {
         setLoadingPolicies(false);
       }
+      // Phase E data
+      try { setPolicyVersions(await getPolicyVersions()); } catch (_) {}
+      try { setPolicyClassification(await getPolicyClassification()); } catch (_) {}
     })();
   }, []);
 
@@ -284,6 +293,111 @@ export default function PoliciesPage() {
                   <div className="text-base text-yellow-300 mt-1 font-medium">{result.required_action}</div>
                 </div>
               )}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Phase E: Policy Versions, Classification, Adversarial Validation */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mt-6">
+        {/* Policy Classification (#14) */}
+        <div className="bg-slate-800 rounded-xl p-6 border border-slate-700">
+          <h2 className="text-lg font-semibold mb-4">Policy Classification</h2>
+          {!policyClassification ? (
+            <div className="text-slate-400 text-sm text-center py-4">Loading...</div>
+          ) : (
+            <div className="space-y-2">
+              {policyClassification.categories ? (
+                Object.entries(policyClassification.categories).map(([cat, policies]: [string, any]) => (
+                  <div key={cat} className="bg-slate-700/50 rounded-lg p-3">
+                    <div className="text-sm font-semibold text-cyan-400 mb-1 capitalize">{cat.replace(/_/g, " ")}</div>
+                    <div className="flex flex-wrap gap-1">
+                      {(Array.isArray(policies) ? policies : []).map((p: any, i: number) => (
+                        <span key={i} className="text-[10px] bg-slate-600 text-slate-300 px-2 py-0.5 rounded font-mono">
+                          {typeof p === "string" ? p : p.policy_id || p.name}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div className="text-[10px] text-slate-400 bg-slate-900/60 rounded p-2 whitespace-pre-wrap">
+                  {JSON.stringify(policyClassification, null, 2)}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Policy Version History (#16) */}
+        <div className="bg-slate-800 rounded-xl p-6 border border-slate-700">
+          <h2 className="text-lg font-semibold mb-4">Version History</h2>
+          {policyVersions.length === 0 ? (
+            <div className="text-slate-400 text-sm text-center py-4">No version history</div>
+          ) : (
+            <div className="space-y-2 max-h-80 overflow-y-auto">
+              {policyVersions.map((v: any, i: number) => (
+                <div key={i} className="bg-slate-700/50 rounded-lg p-3">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-sm font-mono text-cyan-400">{v.policy_id || v.id}</span>
+                    <span className="text-[10px] bg-slate-600 text-slate-300 px-2 py-0.5 rounded">v{v.version || i + 1}</span>
+                  </div>
+                  {v.changed_at && <div className="text-[10px] text-slate-500">{new Date(v.changed_at).toLocaleString()}</div>}
+                  {v.change_reason && <div className="text-xs text-slate-400 mt-1">{v.change_reason}</div>}
+                  {v.diff_summary && <div className="text-[10px] text-amber-400 mt-1 font-mono">{v.diff_summary}</div>}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Adversarial Validation (#15) */}
+        <div className="bg-slate-800 rounded-xl p-6 border border-slate-700">
+          <h2 className="text-lg font-semibold mb-4">Adversarial Validation</h2>
+          {!adversarialResults ? (
+            <div className="space-y-3">
+              <p className="text-sm text-slate-400">Run adversarial scenarios to test policy robustness.</p>
+              <button
+                onClick={async () => {
+                  setAdversarialLoading(true);
+                  try { setAdversarialResults(await runAdversarialValidation()); } catch (e: any) { setErr(e.message); }
+                  setAdversarialLoading(false);
+                }}
+                disabled={adversarialLoading}
+                className="w-full bg-red-500/80 hover:bg-red-600 disabled:bg-slate-600 text-white font-semibold py-2.5 rounded-lg transition text-sm"
+              >
+                {adversarialLoading ? "Running..." : "🔴 Run Adversarial Tests"}
+              </button>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <div className="flex items-center gap-2 mb-2">
+                <span className={`text-xs font-bold px-2 py-1 rounded-full border ${
+                  adversarialResults.all_passed ? "bg-green-500/15 text-green-400 border-green-500/30" : "bg-red-500/15 text-red-400 border-red-500/30"
+                }`}>
+                  {adversarialResults.all_passed ? "✓ All Passed" : "✗ Issues Found"}
+                </span>
+                <span className="text-[10px] text-slate-500">
+                  {adversarialResults.passed || 0}/{adversarialResults.total || 0} passed
+                </span>
+              </div>
+              <div className="space-y-1 max-h-60 overflow-y-auto">
+                {(adversarialResults.results || adversarialResults.scenarios || []).map((r: any, i: number) => (
+                  <div key={i} className={`text-[10px] rounded px-2 py-1.5 border ${
+                    r.passed ? "bg-green-500/10 border-green-500/20 text-green-300" : "bg-red-500/10 border-red-500/20 text-red-300"
+                  }`}>
+                    <div className="flex items-center justify-between">
+                      <span className="font-semibold">{r.scenario_id || r.name || `Test ${i + 1}`}</span>
+                      <span>{r.passed ? "✓" : "✗"}</span>
+                    </div>
+                    {r.description && <div className="text-slate-400 mt-0.5">{r.description}</div>}
+                    {r.expected_decision && <div className="text-slate-500">Expected: {r.expected_decision} | Got: {r.actual_decision || "?"}</div>}
+                  </div>
+                ))}
+              </div>
+              <button onClick={() => setAdversarialResults(null)} className="w-full text-xs text-slate-500 hover:text-slate-300 py-1 transition mt-2">
+                ↺ Run Again
+              </button>
             </div>
           )}
         </div>

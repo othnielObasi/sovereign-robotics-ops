@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { getRunIntrospection, extractLessons, getAgentMemory } from "@/lib/api";
+import { getRunIntrospection, extractLessons, getAgentMemory, searchAgentMemory, getAgentMemoryStats } from "@/lib/api";
 
 export function IntrospectionPanel({ runId }: { runId: string }) {
   const [data, setData] = useState<any>(null);
@@ -10,6 +10,10 @@ export function IntrospectionPanel({ runId }: { runId: string }) {
   const [loading, setLoading] = useState(true);
   const [lessonLoading, setLessonLoading] = useState(false);
   const [tab, setTab] = useState<"denials" | "replans" | "memory">("denials");
+  const [memoryStats, setMemoryStats] = useState<any>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<any[] | null>(null);
+  const [searchLoading, setSearchLoading] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -23,6 +27,8 @@ export function IntrospectionPanel({ runId }: { runId: string }) {
           setData(intro);
           setMemory(mem || []);
         }
+        // Fetch memory stats in background
+        try { if (!cancelled) setMemoryStats(await getAgentMemoryStats()); } catch (_) {}
       } catch (_) {}
       if (!cancelled) setLoading(false);
     })();
@@ -122,6 +128,62 @@ export function IntrospectionPanel({ runId }: { runId: string }) {
 
       {tab === "memory" && (
         <div className="space-y-2">
+          {/* Memory Stats */}
+          {memoryStats && (
+            <div className="flex flex-wrap gap-2 text-[10px]">
+              {memoryStats.total_entries != null && (
+                <span className="px-2 py-0.5 rounded bg-slate-700 text-slate-300">{memoryStats.total_entries} entries</span>
+              )}
+              {memoryStats.categories && Object.entries(memoryStats.categories).map(([cat, count]) => (
+                <span key={cat} className="px-2 py-0.5 rounded bg-slate-700/50 text-slate-400">{cat}: {String(count)}</span>
+              ))}
+            </div>
+          )}
+
+          {/* Memory Search */}
+          <div className="flex gap-1">
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onKeyDown={async (e) => {
+                if (e.key === "Enter" && searchQuery.trim()) {
+                  setSearchLoading(true);
+                  try { setSearchResults(await searchAgentMemory(searchQuery)); } catch (_) { setSearchResults([]); }
+                  setSearchLoading(false);
+                }
+              }}
+              placeholder="Search agent memory..."
+              className="flex-1 bg-slate-900/60 border border-slate-600 rounded px-2 py-1 text-[10px] text-white focus:outline-none focus:border-cyan-500 placeholder:text-slate-500"
+            />
+            <button
+              onClick={async () => {
+                if (!searchQuery.trim()) return;
+                setSearchLoading(true);
+                try { setSearchResults(await searchAgentMemory(searchQuery)); } catch (_) { setSearchResults([]); }
+                setSearchLoading(false);
+              }}
+              disabled={searchLoading || !searchQuery.trim()}
+              className="text-[10px] px-2 py-1 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 hover:bg-cyan-500/30 disabled:opacity-50"
+            >
+              {searchLoading ? "..." : "🔍"}
+            </button>
+          </div>
+
+          {searchResults !== null && (
+            <div className="space-y-1">
+              <div className="text-[10px] text-slate-500">{searchResults.length} result{searchResults.length !== 1 ? "s" : ""}</div>
+              {searchResults.map((r: any, i: number) => (
+                <div key={i} className="text-[10px] bg-cyan-500/10 border border-cyan-500/20 rounded px-2 py-1">
+                  <span className="text-cyan-400 font-semibold">{r.category || "memory"}</span>
+                  <span className="text-slate-400 mx-1">•</span>
+                  <span className="text-slate-300">{r.content?.lesson || r.content || JSON.stringify(r).slice(0, 80)}</span>
+                  {r.similarity != null && <span className="text-[9px] text-slate-500 ml-1">({(r.similarity * 100).toFixed(0)}%)</span>}
+                </div>
+              ))}
+            </div>
+          )}
+
           {/* Extract lessons button */}
           <button onClick={onExtractLessons} disabled={lessonLoading}
             className="w-full text-[10px] font-semibold px-3 py-1.5 rounded-lg border border-purple-500/30 bg-purple-500/10 text-purple-300 hover:bg-purple-500/20 transition disabled:opacity-50">
