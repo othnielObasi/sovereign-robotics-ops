@@ -174,9 +174,8 @@ export default function RunPage({ params }: { params: { runId: string } }) {
       } catch (_) {}
       try { setWorld(await getWorld()); } catch (_) {}
       try { setTelemetry(await getTelemetry()); } catch (_) {}
-      // Phase E: fetch safety report + optimization
+      // Phase E: fetch safety report (optimization deferred to panel expand)
       try { setSafetyReport(await getRunSafetyReport(runId)); } catch (_) {}
-      try { setOptimizationAnalysis(await analyzeRunOptimization(runId)); } catch (_) {}
       await refreshEvents();
     })();
   }, [runId]);
@@ -1158,38 +1157,55 @@ export default function RunPage({ params }: { params: { runId: string } }) {
           {/* Optimization Analysis (#7) */}
           <CollapsibleCard title="⚡ Optimization Analysis" defaultOpen={false}>
             {!optimizationAnalysis ? (
-              <div className="text-xs text-slate-500 text-center py-2">No optimization data</div>
+              <div className="text-center py-2">
+                <button onClick={async () => { try { setOptimizationAnalysis(await analyzeRunOptimization(runId)); } catch (_) {} }}
+                  className="text-xs bg-cyan-600/20 hover:bg-cyan-600/40 text-cyan-400 px-3 py-1.5 rounded border border-cyan-500/30 transition-colors">
+                  Load Analysis
+                </button>
+              </div>
             ) : (
               <div className="space-y-2">
-                {optimizationAnalysis.efficiency_score != null && (
+                {optimizationAnalysis.scorecard?.scores?.efficiency != null && (
                   <div className="flex items-center gap-2">
                     <span className="text-[10px] text-slate-500">Efficiency:</span>
                     <div className="flex-1 h-1.5 bg-slate-700 rounded-full overflow-hidden">
-                      <div className={`h-full rounded-full ${optimizationAnalysis.efficiency_score > 0.7 ? "bg-green-500" : optimizationAnalysis.efficiency_score > 0.4 ? "bg-yellow-500" : "bg-red-500"}`}
-                        style={{ width: `${(optimizationAnalysis.efficiency_score * 100)}%` }} />
+                      <div className={`h-full rounded-full ${optimizationAnalysis.scorecard.scores.efficiency > 0.7 ? "bg-green-500" : optimizationAnalysis.scorecard.scores.efficiency > 0.4 ? "bg-yellow-500" : "bg-red-500"}`}
+                        style={{ width: `${(optimizationAnalysis.scorecard.scores.efficiency * 100)}%` }} />
                     </div>
-                    <span className="text-[10px] font-mono text-slate-400">{(optimizationAnalysis.efficiency_score * 100).toFixed(0)}%</span>
+                    <span className="text-[10px] font-mono text-slate-400">{(optimizationAnalysis.scorecard.scores.efficiency * 100).toFixed(0)}%</span>
                   </div>
                 )}
-                {optimizationAnalysis.path_length != null && (
-                  <div className="flex justify-between text-[10px]">
-                    <span className="text-slate-500">Path length</span>
-                    <span className="text-slate-300 font-mono">{optimizationAnalysis.path_length?.toFixed?.(1) || optimizationAnalysis.path_length}m</span>
+                {optimizationAnalysis.scorecard?.scores?.safety != null && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] text-slate-500">Safety:</span>
+                    <div className="flex-1 h-1.5 bg-slate-700 rounded-full overflow-hidden">
+                      <div className={`h-full rounded-full ${optimizationAnalysis.scorecard.scores.safety > 0.8 ? "bg-green-500" : optimizationAnalysis.scorecard.scores.safety > 0.5 ? "bg-yellow-500" : "bg-red-500"}`}
+                        style={{ width: `${(optimizationAnalysis.scorecard.scores.safety * 100)}%` }} />
+                    </div>
+                    <span className="text-[10px] font-mono text-slate-400">{(optimizationAnalysis.scorecard.scores.safety * 100).toFixed(0)}%</span>
                   </div>
                 )}
-                {optimizationAnalysis.time_elapsed != null && (
+                {optimizationAnalysis.violation_rate != null && (
                   <div className="flex justify-between text-[10px]">
-                    <span className="text-slate-500">Time elapsed</span>
-                    <span className="text-slate-300 font-mono">{optimizationAnalysis.time_elapsed?.toFixed?.(1) || optimizationAnalysis.time_elapsed}s</span>
+                    <span className="text-slate-500">Violation rate</span>
+                    <span className="text-slate-300 font-mono">{(optimizationAnalysis.violation_rate * 100).toFixed(1)}%</span>
                   </div>
+                )}
+                {optimizationAnalysis.governance_led && (
+                  <div className="text-[10px] text-emerald-400/80 bg-emerald-500/10 border border-emerald-500/20 rounded px-2 py-0.5">Governance-led optimization</div>
                 )}
                 {optimizationAnalysis.recommendations?.length > 0 && (
                   <div className="space-y-1 mt-1">
                     <div className="text-[10px] text-slate-500 font-semibold">Recommendations</div>
-                    {optimizationAnalysis.recommendations.map((r: string, i: number) => (
-                      <div key={i} className="text-[10px] bg-cyan-500/10 border border-cyan-500/20 rounded px-2 py-1 text-cyan-300">{r}</div>
+                    {optimizationAnalysis.recommendations.map((r: any, i: number) => (
+                      <div key={i} className="text-[10px] bg-cyan-500/10 border border-cyan-500/20 rounded px-2 py-1 text-cyan-300">
+                        <span className="font-semibold">{r.param}</span> → {r.direction}: {r.reason}
+                      </div>
                     ))}
                   </div>
+                )}
+                {optimizationAnalysis.recommendations?.length === 0 && (
+                  <div className="text-[10px] text-green-400/70">All parameters within optimal bounds</div>
                 )}
               </div>
             )}
