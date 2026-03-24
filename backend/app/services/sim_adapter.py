@@ -19,8 +19,16 @@ class SimAdapter:
         self._headers: Dict[str, str] = {}
         if getattr(settings, "sim_token", ""):
             self._headers["X-Sim-Token"] = settings.sim_token
-        # Single shared client for all simulator calls
-        self._client = httpx.AsyncClient(timeout=5.0, headers=self._headers)
+        # Shared client with explicit pool limits to prevent saturation
+        self._client = httpx.AsyncClient(
+            timeout=5.0,
+            headers=self._headers,
+            limits=httpx.Limits(
+                max_connections=20,
+                max_keepalive_connections=10,
+                keepalive_expiry=30,
+            ),
+        )
 
 
 

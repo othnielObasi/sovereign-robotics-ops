@@ -571,7 +571,7 @@ class RunService:
                 finally:
                     db.close()
 
-                await asyncio.sleep(0.1)
+                await asyncio.sleep(1.0)
 
         except Exception as e:
             logger.exception("Run loop crashed: %s", e)

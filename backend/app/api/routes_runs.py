@@ -98,6 +98,16 @@ async def start_run(
         raise HTTPException(status_code=400, detail="Cannot start a deleted mission")
     svc = get_run_svc()
 
+    # Guard: limit concurrent active runs to prevent sim/event-loop saturation
+    MAX_CONCURRENT_RUNS = 5
+    active_count = db.query(Run).filter(Run.status == "running").count()
+    if active_count >= MAX_CONCURRENT_RUNS:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Too many active runs ({active_count}). "
+                   f"Stop an existing run before starting a new one (max {MAX_CONCURRENT_RUNS}).",
+        )
+
     # Create run and launch loop
     run = svc.start_run(db, mission_id)
 

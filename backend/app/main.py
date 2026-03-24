@@ -68,24 +68,36 @@ async def lifespan(app: FastAPI):
     
     init_database()
 
-    # Auto-resume any runs that are still marked "running" in the DB
-    # (they lost their in-memory asyncio tasks during the last deploy/restart)
+    # Mark stale "running" runs as interrupted on startup.
+    # In-memory state (asyncio tasks, plans) is lost across restarts, so
+    # blindly resuming dozens of loops overwhelms the simulator and event loop.
     from app.db.session import SessionLocal as _SL
-    from app.db.models import Run as _Run
+    from app.db.models import Run as _Run, Mission as _Mission
+    from app.utils.time import utc_now as _utc_now
     _db = _SL()
     try:
-        # Rehydrate persisted plans for any running runs before resuming their loops
-        try:
-            run_service.rehydrate_plans(_db)
-        except Exception as _:
-            logger.warning("Could not rehydrate plans from DB")
-
         stale = _db.query(_Run).filter(_Run.status == "running").all()
-        for r in stale:
-            logger.info("Startup: auto-resuming run %s", r.id)
-            run_service.ensure_loop_running(r.id, r.status)
+        if stale:
+            logger.info("Startup: marking %d stale runs as interrupted", len(stale))
+            mission_ids = set()
+            for r in stale:
+                r.status = "failed"
+                r.ended_at = _utc_now()
+                mission_ids.add(r.mission_id)
+            # Reset missions that were "executing" back to "planned"
+            for mid in mission_ids:
+                m = _db.query(_Mission).filter(_Mission.id == mid).first()
+                if m and m.status == "executing":
+                    m.status = "planned"
+            _db.commit()
+            logger.info("Startup: cleaned up %d stale runs, %d missions reset",
+                        len(stale), len(mission_ids))
     except Exception as exc:
-        logger.warning("Startup resume failed: %s", exc)
+        logger.warning("Startup stale-run cleanup failed: %s", exc)
+        try:
+            _db.rollback()
+        except Exception:
+            pass
     finally:
         _db.close()
     
