@@ -5,7 +5,7 @@ from pydantic import BaseModel
 from typing import Optional
 from app.services import operator_approval as approval_svc
 from app.utils.hashing import sha256_canonical
-from app.auth.jwt import get_current_user
+from app.auth.jwt import require_authenticated_user
 
 router = APIRouter(prefix="/operator", tags=["operator"])
 
@@ -22,15 +22,13 @@ class OverrideRequest(BaseModel):
     reason: str
 
 
-def _require_operator(current_user: str | None):
-    if current_user is None:
-        raise HTTPException(status_code=403, detail="Operator authentication required")
+def _require_operator(current_user: str):
     if current_user != "operator":
         raise HTTPException(status_code=403, detail="Insufficient role")
 
 
 @router.post("/approve")
-def approve(req: ApproveRequest, current_user: str | None = Depends(get_current_user)):
+def approve(req: ApproveRequest, current_user: str = Depends(require_authenticated_user)):
     _require_operator(current_user)
     try:
         ph = sha256_canonical({"proposal": req.proposal})
@@ -41,7 +39,7 @@ def approve(req: ApproveRequest, current_user: str | None = Depends(get_current_
 
 
 @router.post("/override")
-async def operator_override(req: OverrideRequest, current_user: str | None = Depends(get_current_user)):
+async def operator_override(req: OverrideRequest, current_user: str = Depends(require_authenticated_user)):
     """Operator override — allows resuming paused runs, force-approving, or triggering replan.
 
     All overrides are logged as INTERVENTION events in the audit trail.
@@ -87,7 +85,7 @@ async def operator_override(req: OverrideRequest, current_user: str | None = Dep
 
 
 @router.get("/approvals/{run_id}")
-def list_approvals(run_id: str, current_user: str | None = Depends(get_current_user)):
+def list_approvals(run_id: str, current_user: str = Depends(require_authenticated_user)):
     _require_operator(current_user)
     return {"run_id": run_id, "approvals": approval_svc.list_for_run(run_id)}
 

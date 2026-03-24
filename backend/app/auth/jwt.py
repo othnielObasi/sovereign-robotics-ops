@@ -43,32 +43,55 @@ def decode_token(token: str) -> Dict[str, Any]:
 async def get_current_user(
     creds: Optional[HTTPAuthorizationCredentials] = Depends(_bearer_scheme),
 ) -> Optional[str]:
-    """Return the subject claim from a valid Bearer token.
+    """Return the subject claim from a valid Bearer token, or None.
 
-    In development mode (non-production) this is *optional*:
-    missing or invalid tokens are silently ignored so the dashboard
-    and demo work without authentication.
+    This dependency is always *optional* — it never raises 401.
+    Use it on routes where knowing the user is nice-to-have (audit logging)
+    but the endpoint should work without authentication (dashboard, missions,
+    runs, governance queries, etc.).
 
-    In production the token is **required**.
+    For routes that **require** authentication (operator actions), use
+    ``require_authenticated_user`` instead.
     """
     if creds is None or creds.credentials == "":
-        if settings.require_auth:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Authentication required",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-        return None  # allow anonymous when auth is not required
+        return None
 
     try:
         payload = decode_token(creds.credentials)
         return payload.get("sub")
     except JWTError as exc:
-        if settings.require_auth:
+        logger.warning("Invalid JWT ignored: %s", exc)
+        return None
+
+
+async def require_authenticated_user(
+    creds: Optional[HTTPAuthorizationCredentials] = Depends(_bearer_scheme),
+) -> str:
+    """Return the subject claim from a valid Bearer token.
+
+    Raises HTTP 401 if no token is provided or the token is invalid.
+    Use this on operator-privileged routes that must be authenticated.
+    """
+    if creds is None or creds.credentials == "":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    try:
+        payload = decode_token(creds.credentials)
+        sub = payload.get("sub")
+        if not sub:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail=f"Invalid token: {exc}",
+                detail="Token missing subject claim",
                 headers={"WWW-Authenticate": "Bearer"},
             )
-        logger.warning("Invalid JWT ignored (auth not required): %s", exc)
-        return None
+        return sub
+    except JWTError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"Invalid token: {exc}",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
