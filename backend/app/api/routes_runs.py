@@ -46,41 +46,66 @@ async def start_run_legacy(
     return await start_run(body.mission_id, db)
 
 
-async def _generate_plan_background(svc: RunService, run_id: str, mission_id: str, mission_title: str, goal_json: str):
-    """Background task: generate LLM plan and attach to run.
+async def _plan_and_start_loop(svc: RunService, run_id: str, mission_id: str, mission_title: str, goal_json: str):
+    """Background task: attempt LLM plan upgrade, then start the run loop.
 
-    Runs after the HTTP response has already been returned so the user
-    isn't blocked waiting for LLM cascading.
+    The run is created in 'planning' status with a seed fallback plan already
+    persisted.  This task:
+    1. Attempts LLM plan generation (with a timeout).
+    2. If successful, replaces the seed plan with the LLM plan.
+    3. Transitions the run from 'planning' to 'running' and launches the loop.
+
+    The robot does NOT move until this task calls begin_running().
     """
     from app.db.session import SessionLocal
+    LLM_PLAN_TIMEOUT = 20  # seconds — generous but bounded
+
     db = SessionLocal()
     try:
-        telemetry = None
-        try:
-            telemetry = await svc.sim.get_telemetry()
-        except Exception:
-            telemetry = {}
+        goal = json.loads(goal_json)
 
-        planner = GeminiPlanner()
-        plan = await planner.generate_plan(telemetry, mission_title, json.loads(goal_json))
-        if plan and plan.get("waypoints"):
-            svc._plans[run_id] = plan.get("waypoints")
-            plan_payload = {
-                "mission_id": mission_id,
-                "plan": plan,
-                "note": "Initial LLM multi-waypoint plan generated (background)",
-            }
-            svc._append_event(db, run_id, "PLAN", plan_payload)
-            db.commit()
-            logger.info(f"LLM plan attached to run {run_id}")
-        else:
-            logger.warning(f"LLM plan generation returned empty for run {run_id}")
+        # --- Attempt LLM plan upgrade ---
+        if settings.gemini_configured:
+            try:
+                telemetry = {}
+                try:
+                    telemetry = await svc.sim.get_telemetry()
+                except Exception:
+                    pass
+
+                async with asyncio.timeout(LLM_PLAN_TIMEOUT):
+                    planner = GeminiPlanner()
+                    plan = await planner.generate_plan(telemetry, mission_title, goal)
+
+                if plan and plan.get("waypoints"):
+                    svc._plans[run_id] = plan["waypoints"]
+                    svc._append_event(db, run_id, "PLAN", {
+                        "mission_id": mission_id,
+                        "plan": plan,
+                        "note": "LLM multi-waypoint plan (upgraded from fallback)",
+                    })
+                    db.commit()
+                    logger.info("LLM plan ready for run %s (%d waypoints)", run_id, len(plan["waypoints"]))
+            except (asyncio.TimeoutError, Exception) as exc:
+                logger.warning("LLM plan failed/timed out for run %s: %s — using seed fallback", run_id, exc)
+
+        # --- Transition planning → running and launch loop ---
+        svc.begin_running(db, run_id)
+
+        if svc._ws_broadcast:
+            await svc._ws_broadcast(run_id, {"kind": "status", "data": {"status": "running"}})
+
     except Exception as exc:
-        logger.warning(f"Background LLM plan generation failed for run {run_id}: {exc}")
+        logger.error("Plan-and-start failed for run %s: %s", run_id, exc)
         try:
             db.rollback()
         except Exception:
             pass
+        # Ensure run doesn't stay stuck in 'planning'
+        try:
+            svc.begin_running(db, run_id)
+        except Exception as inner:
+            logger.error("Emergency begin_running also failed for run %s: %s", run_id, inner)
     finally:
         db.close()
 
@@ -108,11 +133,11 @@ async def start_run(
                    f"Stop an existing run before starting a new one (max {MAX_CONCURRENT_RUNS}).",
         )
 
-    # Create run and launch loop
+    # Create run in 'planning' status — loop not launched yet
     run = svc.start_run(db, mission_id)
 
-    # Persist an immediate conservative seed plan so the run has a deterministic
-    # plan record even before slower background planning completes.
+    # Persist a seed fallback plan synchronously so the PLAN event is
+    # immediately visible in the chain-of-trust, even before LLM planning.
     try:
         telemetry = await svc.sim.get_telemetry()
     except Exception:
@@ -120,25 +145,18 @@ async def start_run(
 
     seed_waypoint = generate_fallback_waypoint(telemetry, json.loads(mission.goal_json))
     svc._plans[run.id] = [seed_waypoint]
-    svc._append_event(
-        db,
-        run.id,
-        "PLAN",
-        {
-            "mission_id": mission.id,
-            "plan": {"waypoints": [seed_waypoint]},
-            "note": "Initial conservative fallback plan generated at run start",
-        },
-    )
+    svc._append_event(db, run.id, "PLAN", {
+        "mission_id": mission.id,
+        "plan": {"waypoints": [seed_waypoint]},
+        "note": "Seed fallback plan — LLM plan pending",
+    })
     db.commit()
 
-    # Fire-and-forget: generate LLM plan in background so this response
-    # returns immediately.  The plan will be attached to the run once ready.
-    # Only attempt if Gemini is actually configured.
-    if settings.gemini_configured:
-        asyncio.create_task(
-            _generate_plan_background(svc, run.id, mission.id, mission.title, mission.goal_json)
-        )
+    # Fire background task: attempt LLM plan upgrade → transition to 'running' → launch loop.
+    # The robot will NOT move until the background task calls begin_running().
+    asyncio.create_task(
+        _plan_and_start_loop(svc, run.id, mission.id, mission.title, mission.goal_json)
+    )
 
     # Mark mission as executing
     mission.status = "executing"

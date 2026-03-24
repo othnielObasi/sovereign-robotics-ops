@@ -110,7 +110,7 @@ class RunService:
         run = Run(
             id=new_id("run"),
             mission_id=mission_id,
-            status="running",
+            status="planning",
             started_at=utc_now(),
             ended_at=None,
             policy_version=pv_hash,
@@ -120,9 +120,22 @@ class RunService:
         db.commit()
         db.refresh(run)
 
-        # launch loop; plan may be attached later via self._plans[run.id]
-        self._launch_loop(run.id)
+        # Do NOT launch loop yet — caller must attach a plan first, then
+        # call begin_running() to transition from "planning" → "running".
         return run
+
+    def begin_running(self, db: Session, run_id: str) -> None:
+        """Transition a run from 'planning' to 'running' and launch the loop.
+
+        Must be called only after a plan has been attached via self._plans.
+        """
+        run = db.query(Run).filter(Run.id == run_id).first()
+        if not run or run.status != "planning":
+            return
+        run.status = "running"
+        db.commit()
+        self._launch_loop(run_id)
+        logger.info("Run %s transitioned planning → running", run_id)
 
     def _launch_loop(self, run_id: str) -> None:
         """Spawn the asyncio run-loop task for a given run."""

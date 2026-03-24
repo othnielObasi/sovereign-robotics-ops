@@ -322,11 +322,26 @@ def _step() -> None:
     state["human_conf"] = float(hc)
     state["human_distance_m"] = float(hd_m)
 
-    # Geofence alert (for completeness; doesn't clamp position)
-    if not (
-        GEOFENCE["min_x"] <= state["x"] <= GEOFENCE["max_x"]
-        and GEOFENCE["min_y"] <= state["y"] <= GEOFENCE["max_y"]
-    ):
+    # Geofence enforcement: clamp position to boundaries
+    if state["x"] < GEOFENCE["min_x"]:
+        state["x"] = GEOFENCE["min_x"]
+        state["speed"] = 0.0
+        state["target"] = None
+        state["events"].append("geofence_violation")
+    elif state["x"] > GEOFENCE["max_x"]:
+        state["x"] = GEOFENCE["max_x"]
+        state["speed"] = 0.0
+        state["target"] = None
+        state["events"].append("geofence_violation")
+    if state["y"] < GEOFENCE["min_y"]:
+        state["y"] = GEOFENCE["min_y"]
+        state["speed"] = 0.0
+        state["target"] = None
+        state["events"].append("geofence_violation")
+    elif state["y"] > GEOFENCE["max_y"]:
+        state["y"] = GEOFENCE["max_y"]
+        state["speed"] = 0.0
+        state["target"] = None
         state["events"].append("geofence_violation")
 
 
@@ -380,6 +395,9 @@ def command(request: Request, cmd: Command):
         x = float(cmd.params.get("x", state["x"]))
         y = float(cmd.params.get("y", state["y"]))
         max_speed = float(cmd.params.get("max_speed", 0.5))
+        # Reject targets outside geofence
+        if not (GEOFENCE["min_x"] <= x <= GEOFENCE["max_x"] and GEOFENCE["min_y"] <= y <= GEOFENCE["max_y"]):
+            return {"ok": False, "error": f"Target ({x},{y}) outside geofence"}
         state["target"] = {"x": x, "y": y, "max_speed": max_speed}
         return {"ok": True, "set_target": state["target"]}
 

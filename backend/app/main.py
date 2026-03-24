@@ -76,7 +76,7 @@ async def lifespan(app: FastAPI):
     from app.utils.time import utc_now as _utc_now
     _db = _SL()
     try:
-        stale = _db.query(_Run).filter(_Run.status == "running").all()
+        stale = _db.query(_Run).filter(_Run.status.in_(("running", "planning"))).all()
         if stale:
             logger.info("Startup: marking %d stale runs as interrupted", len(stale))
             mission_ids = set()
