@@ -15,6 +15,15 @@ __pycache__/
 # Database
 *.db
 backend/data/
+data/
 
 # Generated assets
 recordings/
+
+# IDE / tool caches
+.qodo/
+.vscode/
+*.swp
+
+# Generated runtime files
+userdata.sh

@@ -36,19 +36,25 @@ docker-compose up -d
 
 ```
 sovereign-robotics-ops/
-├── backend/                 # FastAPI backend (Python)
+├── backend/                 # FastAPI backend (Python 3.11)
 │   ├── app/
 │   │   ├── api/            # REST endpoints
+│   │   ├── auth/           # JWT authentication
+│   │   ├── db/             # SQLAlchemy models & session
 │   │   ├── services/       # Governance engine, compliance reports
-│   │   ├── policies/       # Safety policy definitions
+│   │   ├── policies/       # Safety policy definitions (YAML catalog)
 │   │   └── schemas/        # Pydantic models
-├── frontend/               # Next.js dashboard (React)
+│   ├── alembic/            # Database migrations
+│   └── tests/              # Backend test suite
+├── frontend/               # Next.js 14 dashboard (React/TypeScript)
 │   └── src/
-│       ├── app/           # Pages (demo, runs, policies)
-│       └── components/    # Map2DEnhanced, Timeline, etc.
-├── sim/                   # Mock robot simulator
-├── infra/                 # Grafana, OpenTelemetry configs
-└── .github/workflows/     # CI/CD pipelines
+│       ├── app/            # Pages (demo, runs, policies, audit)
+│       └── components/     # Map2DEnhanced, Timeline, NavLinks
+├── sim/                    # Mock robot simulator (FastAPI)
+├── deploy/                 # Deployment scripts & submission
+├── docs/                   # Architecture, API, deploy guides
+├── infra/                  # Grafana dashboards
+└── .github/workflows/      # CI/CD (tests, Vultr deploy)
 ```
 
 Developer guide: See [docs/DEVELOPER.md](docs/DEVELOPER.md) for internal
@@ -96,9 +102,9 @@ The `/demo` page includes 4 interactive scenarios:
 
 ## 🛠 Deployment (Vultr)
 
-This project is packaged for deployment to a single Vultr VM per the hackathon requirements.
+This project deploys to a single Vultr VM. Pushing to `main` triggers auto-deployment via GitHub Actions.
 
-Quick deploy (recommended for reviewers):
+Quick deploy (manual):
 
 ```bash
 # On the Vultr VM
@@ -108,9 +114,9 @@ docker compose -f docker-compose.vultr.yml up --build -d
 ```
 
 Notes:
-- The `docker-compose.vultr.yml` file configures the frontend and backend services for a single VM deployment.
-- For serving large static assets (demo video), we recommend configuring a host webserver (nginx) as described in `DEPLOY_VULTR.md`.
-- Use PostgreSQL in production; local dev may use SQLite via the compose configuration.
+- `docker-compose.vultr.yml` orchestrates all services with health checks, resource limits, and network isolation.
+- See `deploy/vultr-deploy.sh` for the full provisioning script (Nginx, SSL, backups).
+- Use PostgreSQL in production; local dev may use SQLite via `docker-compose.yml`.
 
 ## 📦 Submission & Packaging
 

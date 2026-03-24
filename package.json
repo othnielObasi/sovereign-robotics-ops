@@ -1,0 +1,28 @@
+{
+  "name": "sovereign-robotics-ops",
+  "version": "1.0.0",
+  "description": "> **Track 1: Autonomous Robotics Control in Simulation** >  > The governance layer for autonomous robot control. We're not building the robot brain — we're building the **robot conscience**.",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs",
+    "test": "tests"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/othnielObasi/sovereign-robotics-ops.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/othnielObasi/sovereign-robotics-ops/issues"
+  },
+  "homepage": "https://github.com/othnielObasi/sovereign-robotics-ops#readme",
+  "devDependencies": {
+    "playwright": "^1.41.0"
+  }
+}
