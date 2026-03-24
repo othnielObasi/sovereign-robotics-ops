@@ -2,16 +2,11 @@ from __future__ import annotations
 
 from typing import Dict, Any, Tuple, List
 from app.schemas.governance import GovernanceDecision, ActionProposal
+from app.world_model import GEOFENCE, ZONE_SPEED_LIMITS
 
 
 # --- Policy parameters (MVP constants) ---
-GEOFENCE = {"min_x": 0.0, "max_x": 40.0, "min_y": 0.0, "max_y": 25.0}
-
-ZONE_SPEED_LIMITS = {
-    "aisle": 0.5,
-    "corridor": 0.7,
-    "loading_bay": 0.4,
-}
+# GEOFENCE and ZONE_SPEED_LIMITS now loaded from world_model (single source of truth)
 
 MIN_OBSTACLE_CLEARANCE_M = 0.5
 MIN_HUMAN_CONF = 0.65

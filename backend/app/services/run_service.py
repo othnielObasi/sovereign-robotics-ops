@@ -13,7 +13,7 @@ from app.services.sim_adapter import SimAdapter
 from app.services.agent_service import AgentRouter
 from app.services.governance_engine import GovernanceEngine
 from app.services.telemetry_service import TelemetryService
-from app.policies.rules_python import ZONE_SPEED_LIMITS
+from app.world_model import ZONE_SPEED_LIMITS
 from app.utils.ids import new_id
 from app.utils.time import utc_now
 from app.utils.hashing import sha256_canonical
@@ -40,6 +40,13 @@ class RunService:
         self._stagnant_counts: Dict[str, int] = {}
         self.STAGNATION_THRESHOLD_M = 0.02  # movement below this counts as stagnant
         self.STAGNATION_CYCLES = 10
+
+        # Replan-on-denial: track consecutive denials of the current waypoint
+        self._wp_denial_counts: Dict[str, int] = {}
+        self.REPLAN_DENIAL_THRESHOLD = 5  # re-plan after N consecutive denials
+
+        # Executed path tracking: actual positions visited per run
+        self._executed_paths: Dict[str, List[Dict[str, Any]]] = {}
 
         self.sim = SimAdapter()
         self.agent = AgentRouter()
@@ -355,11 +362,22 @@ class RunService:
                     execution = None
                     was_executed = False
                     if gov_decision.decision == "APPROVED":
+                        # Reset waypoint denial counter on approval
+                        self._wp_denial_counts[run_id] = 0
+
                         cmd = {"intent": proposal.intent, "params": proposal.params}
                         execution = await self.sim.send_command(cmd)
                         exec_payload = {"command": cmd, "result": execution}
                         self._append_event(db, run_id, "EXECUTION", exec_payload)
                         was_executed = True
+
+                        # Track executed path
+                        self._executed_paths.setdefault(run_id, []).append({
+                            "x": round(float(telemetry.get("x", 0)), 4),
+                            "y": round(float(telemetry.get("y", 0)), 4),
+                            "speed": round(float(telemetry.get("speed", 0)), 4),
+                            "ts": utc_now().isoformat(),
+                        })
 
                         # If we executed a planned waypoint, remove it from the plan
                         if plan_wps:
@@ -369,6 +387,60 @@ class RunService:
                                     self._plans.pop(run_id, None)
                             except Exception:
                                 pass
+                    else:
+                        # Denied or NEEDS_REVIEW — increment waypoint denial counter
+                        self._wp_denial_counts[run_id] = self._wp_denial_counts.get(run_id, 0) + 1
+                        denial_count = self._wp_denial_counts[run_id]
+
+                        if denial_count >= self.REPLAN_DENIAL_THRESHOLD and plan_wps:
+                            # Trigger replanning: discard blocked waypoint and request new plan
+                            blocked_wp = plan_wps[0] if plan_wps else {}
+                            logger.warning(
+                                "Run %s: %d consecutive denials on waypoint %s — triggering replan",
+                                run_id, denial_count, blocked_wp,
+                            )
+                            # Remove the blocked waypoint
+                            try:
+                                self._plans[run_id].pop(0)
+                                if not self._plans[run_id]:
+                                    self._plans.pop(run_id, None)
+                            except Exception:
+                                pass
+
+                            # Record replan event in chain-of-trust
+                            replan_payload = {
+                                "reason": "repeated_denial",
+                                "denial_count": denial_count,
+                                "blocked_waypoint": blocked_wp,
+                                "policy_hits": gov_decision.policy_hits,
+                                "policy_state": gov_decision.policy_state,
+                            }
+                            self._append_event(db, run_id, "REPLAN", replan_payload)
+
+                            # Attempt to generate a new plan via LLM
+                            try:
+                                denial_context = ", ".join(gov_decision.reasons) if gov_decision.reasons else "policy violation"
+                                replan_instruction = (
+                                    f"{nl_task}. Previous waypoint at ({blocked_wp.get('x')},{blocked_wp.get('y')}) "
+                                    f"was blocked: {denial_context}. Plan an alternative route avoiding that area."
+                                )
+                                planner = self.agent._gemini_planner()
+                                new_plan = await planner.generate_plan(telemetry, replan_instruction, goal)
+                                new_wps = new_plan.get("waypoints", [])
+                                if new_wps:
+                                    self._plans[run_id] = new_wps
+                                    replan_payload["new_plan_waypoints"] = len(new_wps)
+                                    logger.info("Run %s: replanned with %d new waypoints", run_id, len(new_wps))
+                            except Exception as replan_err:
+                                logger.warning("Run %s: replan LLM call failed: %s", run_id, replan_err)
+
+                            self._wp_denial_counts[run_id] = 0
+
+                            if self._ws_broadcast:
+                                await self._ws_broadcast(run_id, {
+                                    "kind": "alert",
+                                    "data": {"event": "REPLAN", "payload": replan_payload},
+                                })
 
                     # Update the governance decision record with execution result and event hash
                     from app.db.models import GovernanceDecisionRecord
@@ -415,6 +487,7 @@ class RunService:
                                 "execution_reason": execution_reason,
                                 "distance_to_goal": distance_to_goal,
                                 "stagnant_cycles": stagnant_cycles,
+                                "executed_path_len": len(self._executed_paths.get(run_id, [])),
                             }
                         })
 
@@ -457,3 +530,7 @@ class RunService:
         # Cleanup finished task references
         self._tasks.pop(run_id, None)
         self._stop_flags.pop(run_id, None)
+        self._wp_denial_counts.pop(run_id, None)
+        self._executed_paths.pop(run_id, None)
+        self._last_positions.pop(run_id, None)
+        self._stagnant_counts.pop(run_id, None)

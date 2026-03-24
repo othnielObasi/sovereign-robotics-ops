@@ -10,6 +10,7 @@ from app.schemas.governance import ActionProposal, GovernanceDecision
 from app.policies.rules_python import evaluate_policies
 from app.db.models import GovernanceDecisionRecord
 from app.utils.time import utc_now
+from app.policies.versioning import policy_version_hash
 
 logger = logging.getLogger("app.governance")
 
@@ -92,6 +93,7 @@ class GovernanceEngine:
             was_executed="true" if was_executed else "false",
             event_hash=event_hash,
             escalated="true" if escalated else "false",
+            policy_version=policy_version_hash(),
         )
         db.add(record)
 

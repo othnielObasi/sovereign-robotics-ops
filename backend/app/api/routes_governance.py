@@ -130,3 +130,15 @@ def get_governance_receipt(run_id: str, decision_id: int):
         return receipt
     finally:
         db.close()
+
+
+@router.get("/policies/version")
+def get_policy_version():
+    """Return the current policy version hash and all active parameters.
+
+    The hash changes whenever any policy parameter is modified, enabling
+    traceability of which policy configuration was active for each decision.
+    """
+    from app.policies.versioning import policy_version_info
+
+    return policy_version_info()

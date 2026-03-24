@@ -84,6 +84,7 @@ class GovernanceDecisionRecord(Base):
     was_executed = Column(String, nullable=False, default="false")  # "true"|"false"
     event_hash = Column(String, nullable=True)  # links to chain-of-trust Event.hash
     escalated = Column(String, nullable=False, default="false")  # "true" if escalated to operator
+    policy_version = Column(String, nullable=True)  # SHA256 prefix of active policy params
 
     run = relationship("Run", back_populates="governance_decisions")
 

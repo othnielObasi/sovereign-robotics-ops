@@ -31,6 +31,11 @@ app = FastAPI(title="SRO Mock Simulator", version="0.1.0")
 SIM_TICK_HZ = float(os.getenv("SIM_TICK_HZ", "10"))
 DT = 1.0 / max(SIM_TICK_HZ, 1.0)
 
+# Motion dynamics
+MAX_ACCEL = 0.8       # m/s^2 — trapezoidal velocity ramp-up
+MAX_DECEL = 1.2       # m/s^2 — braking deceleration
+MAX_HEADING_RATE = 2.0  # rad/s — maximum turning rate
+
 SIM_TOKEN = os.getenv("SIM_TOKEN", "").strip()
 
 
@@ -260,19 +265,47 @@ def _step() -> None:
             state["speed"] = 0.0
             state["target"] = None
         else:
-            # Move toward target
-            step_speed = max_speed
+            # --- Trapezoidal velocity profile ---
+            current_speed = state["speed"]
+
+            # Desired speed starts at max_speed
+            desired_speed = max_speed
+
             # Basic slowdown near obstacles to make demo interesting
             obs = _nearest_obstacle(state["x"], state["y"])
             if obs < 0.8:
-                step_speed = min(step_speed, 0.35)
+                desired_speed = min(desired_speed, 0.35)
                 state["events"].append("near_miss")
 
-            ux, uy = dx / dist, dy / dist
+            # Deceleration ramp: slow down when approaching target
+            # v^2 = 2 * a * d  →  v = sqrt(2 * MAX_DECEL * dist)
+            decel_speed = math.sqrt(2.0 * MAX_DECEL * dist)
+            desired_speed = min(desired_speed, decel_speed)
+
+            # Apply acceleration/deceleration limits
+            if desired_speed > current_speed:
+                step_speed = min(desired_speed, current_speed + MAX_ACCEL * dt)
+            else:
+                step_speed = max(desired_speed, current_speed - MAX_DECEL * dt)
+            step_speed = max(step_speed, 0.0)
+
+            # --- Heading rate limit ---
+            desired_theta = math.atan2(dy, dx)
+            current_theta = state["theta"]
+            # Shortest angular difference
+            dtheta = math.atan2(math.sin(desired_theta - current_theta),
+                                math.cos(desired_theta - current_theta))
+            max_dtheta = MAX_HEADING_RATE * dt
+            clamped_dtheta = max(-max_dtheta, min(max_dtheta, dtheta))
+            new_theta = current_theta + clamped_dtheta
+
+            # Move along the *current* (rate-limited) heading
+            ux = math.cos(new_theta)
+            uy = math.sin(new_theta)
             step_dist = step_speed * dt
             state["x"] += ux * min(step_dist, dist)
             state["y"] += uy * min(step_dist, dist)
-            state["theta"] = math.atan2(uy, ux)
+            state["theta"] = new_theta
             state["speed"] = step_speed
 
     # Update perception

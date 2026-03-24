@@ -11,6 +11,7 @@ import httpx
 
 from app.config import settings
 from app.schemas.governance import ActionProposal
+from app.world_model import GEOFENCE as _WM_GEOFENCE
 
 
 logger = logging.getLogger("app.gemini_planner")
@@ -269,8 +270,8 @@ Output STRICT JSON:
                 obj = _extract_json(text)
                 waypoints = obj.get("waypoints", [])
                 for wp in waypoints:
-                    wp["x"] = max(0.0, min(40.0, float(wp.get("x", 0))))
-                    wp["y"] = max(0.0, min(25.0, float(wp.get("y", 0))))
+                    wp["x"] = max(_WM_GEOFENCE["min_x"], min(_WM_GEOFENCE["max_x"], float(wp.get("x", 0))))
+                    wp["y"] = max(_WM_GEOFENCE["min_y"], min(_WM_GEOFENCE["max_y"], float(wp.get("y", 0))))
                     wp["max_speed"] = max(0.1, min(1.0, float(wp.get("max_speed", 0.5))))
                 # Ensure last waypoint matches the goal (snap to bay coords)
                 if goal and waypoints:

@@ -293,3 +293,17 @@ def audit_bundle(
     if not bundle:
         raise HTTPException(status_code=404, detail="Run not found")
     return bundle
+
+
+@router.get("/runs/{run_id}/scores")
+def get_run_scores(
+    run_id: str,
+    db: Session = Depends(get_db),
+):
+    """Compute and return multi-objective scorecard for a run."""
+    from app.services.scoring_engine import compute_scorecard
+
+    run = db.query(Run).filter(Run.id == run_id).first()
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+    return compute_scorecard(db, run_id)
