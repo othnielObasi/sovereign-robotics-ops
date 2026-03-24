@@ -27,6 +27,7 @@ def test_root(client: TestClient):
 
 def test_health(client: TestClient):
     from app.api import routes_health
+    from unittest.mock import AsyncMock, patch, MagicMock
 
     class _Conn:
         def execute(self, _query):
@@ -36,25 +37,23 @@ def test_health(client: TestClient):
         def connect(self):
             return nullcontext(_Conn())
 
-    async def _ok_telemetry(self):
-        return {"x": 0.0, "y": 0.0}
-
-    async def _close(self):
-        return None
-
     original_engine = routes_health.engine
-    original_get_telemetry = routes_health.SimAdapter.get_telemetry
-    original_close = routes_health.SimAdapter.close
     routes_health.engine = _Engine()
-    routes_health.SimAdapter.get_telemetry = _ok_telemetry
-    routes_health.SimAdapter.close = _close
+
+    # Mock httpx.AsyncClient to return 200 for sim check
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+
+    mock_client = AsyncMock()
+    mock_client.get = AsyncMock(return_value=mock_response)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
 
     try:
-        r = client.get("/health")
+        with patch("app.api.routes_health.httpx.AsyncClient", return_value=mock_client):
+            r = client.get("/health")
     finally:
         routes_health.engine = original_engine
-        routes_health.SimAdapter.get_telemetry = original_get_telemetry
-        routes_health.SimAdapter.close = original_close
 
     assert r.status_code == 200
     data = r.json()

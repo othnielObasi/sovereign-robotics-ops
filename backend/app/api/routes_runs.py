@@ -134,9 +134,11 @@ async def start_run(
 
     # Fire-and-forget: generate LLM plan in background so this response
     # returns immediately.  The plan will be attached to the run once ready.
-    asyncio.create_task(
-        _generate_plan_background(svc, run.id, mission.id, mission.title, mission.goal_json)
-    )
+    # Only attempt if Gemini is actually configured.
+    if settings.gemini_configured:
+        asyncio.create_task(
+            _generate_plan_background(svc, run.id, mission.id, mission.title, mission.goal_json)
+        )
 
     # Mark mission as executing
     mission.status = "executing"

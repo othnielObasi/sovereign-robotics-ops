@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import logging
 
+import httpx
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
 from app.config import settings
 from app.db.session import engine
-from app.services.sim_adapter import SimAdapter
 
 router = APIRouter()
 logger = logging.getLogger("app.routes_health")
@@ -28,15 +28,13 @@ async def health():
     except Exception as exc:
         logger.warning("Health DB check failed: %s", exc)
 
-    sim = SimAdapter()
     try:
-        await sim.get_telemetry()
-        sim_ok = True
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            r = await client.get(f"{settings.sim_base_url.rstrip('/')}/telemetry")
+            sim_ok = r.status_code == 200
     except Exception as exc:
         sim_error = str(exc)
         logger.warning("Health simulator check failed: %s", exc)
-    finally:
-        await sim.close()
 
     payload = {
         "status": "ok" if db_ok and sim_ok else "degraded",
