@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import yaml
-from fastapi import APIRouter, Query, HTTPException
+from fastapi import APIRouter, Depends, Query, HTTPException
+from sqlalchemy.orm import Session
 from typing import Any, Dict, List, Optional
 
 from app.schemas.governance import (
@@ -10,6 +11,7 @@ from app.schemas.governance import (
 )
 from app.policies.rules_python import evaluate_policies
 from app.db.session import SessionLocal
+from app.deps import get_db
 from app.services.governance_engine import GovernanceEngine
 
 router = APIRouter()
@@ -274,55 +276,48 @@ def get_policy_classification():
 @router.get("/policies/versions")
 def list_policy_versions(
     limit: int = Query(50, ge=1, le=200),
+    db: Session = Depends(get_db),
 ):
     """Return policy version history — every distinct config ever active."""
     from app.db.models import PolicyVersion
 
-    db = SessionLocal()
-    try:
-        rows = (
-            db.query(PolicyVersion)
-            .order_by(PolicyVersion.created_at.desc())
-            .limit(limit)
-            .all()
-        )
-        import json as _json
-        return [
-            {
-                "id": r.id,
-                "version_hash": r.version_hash,
-                "parameters": _json.loads(r.parameters_json) if r.parameters_json else {},
-                "created_at": r.created_at.isoformat() if r.created_at else None,
-                "description": r.description,
-            }
-            for r in rows
-        ]
-    finally:
-        db.close()
+    rows = (
+        db.query(PolicyVersion)
+        .order_by(PolicyVersion.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+    import json as _json
+    return [
+        {
+            "id": r.id,
+            "version_hash": r.version_hash,
+            "parameters": _json.loads(r.parameters_json) if r.parameters_json else {},
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+            "description": r.description,
+        }
+        for r in rows
+    ]
 
 
 # ── Post-run safety report (#14) ──
 
 @router.get("/runs/{run_id}/safety-report")
-def get_safety_report(run_id: str):
+def get_safety_report(run_id: str, db: Session = Depends(get_db)):
     """Get safety validation report for a completed run."""
     from app.db.models import Run
     import json as _json
 
-    db = SessionLocal()
-    try:
-        run = db.query(Run).filter(Run.id == run_id).first()
-        if not run:
-            raise HTTPException(status_code=404, detail="Run not found")
-        return {
-            "run_id": run_id,
-            "safety_verdict": run.safety_verdict,
-            "safety_report": _json.loads(run.safety_report_json) if run.safety_report_json else None,
-            "policy_version": run.policy_version,
-            "planning_mode": run.planning_mode,
-        }
-    finally:
-        db.close()
+    run = db.query(Run).filter(Run.id == run_id).first()
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+    return {
+        "run_id": run_id,
+        "safety_verdict": run.safety_verdict,
+        "safety_report": _json.loads(run.safety_report_json) if run.safety_report_json else None,
+        "policy_version": run.policy_version,
+        "planning_mode": run.planning_mode,
+    }
 
 
 # ── Adversarial + holdout validation (#15) ──
@@ -358,16 +353,13 @@ def search_agent_memory(
     query: str = Query(..., min_length=1, max_length=500, description="Search query"),
     category: Optional[str] = Query(None, description="Filter: decision|denial|learning|strategy"),
     limit: int = Query(10, ge=1, le=50),
+    db: Session = Depends(get_db),
 ):
     """Semantic similarity search across agent memory entries."""
     from app.services.persistent_memory import PersistentMemory
 
-    db = SessionLocal()
-    try:
-        mem = PersistentMemory()
-        return mem.recall_similar(db, query=query, category=category, limit=limit)
-    finally:
-        db.close()
+    mem = PersistentMemory()
+    return mem.recall_similar(db, query=query, category=category, limit=limit)
 
 
 # ── Cross-run learning aggregation (#18) ──
@@ -375,15 +367,12 @@ def search_agent_memory(
 @router.get("/agent/cross-run-learning")
 def get_cross_run_learning(
     limit: int = Query(20, ge=3, le=100),
+    db: Session = Depends(get_db),
 ):
     """Get cross-run learning aggregation: trends, patterns, baselines."""
     from app.services.cross_run_learning import aggregate_cross_run_lessons
 
-    db = SessionLocal()
-    try:
-        return aggregate_cross_run_lessons(db, limit=limit)
-    finally:
-        db.close()
+    return aggregate_cross_run_lessons(db, limit=limit)
 
 
 # ── Score trends across runs (#10) ──
@@ -391,12 +380,12 @@ def get_cross_run_learning(
 @router.get("/analytics/score-trends")
 def get_score_trends(
     limit: int = Query(20, ge=3, le=100),
+    db: Session = Depends(get_db),
 ):
     """Get score trends across recent runs for dashboard charts."""
     from app.services.scoring_engine import compute_scorecard
     from app.db.models import Run
 
-    db = SessionLocal()
     try:
         runs = (
             db.query(Run)
@@ -421,202 +410,194 @@ def get_score_trends(
             except Exception:
                 pass
         return {"count": len(trends), "trends": trends}
-    finally:
-        db.close()
+    except Exception:
+        return {"count": 0, "trends": []}
 
 
 # ── LLM divergence explanation (#20) ──
 
 @router.post("/runs/{run_id}/divergence-explanation")
-def generate_divergence_explanation(run_id: str):
+def generate_divergence_explanation(run_id: str, db: Session = Depends(get_db)):
     """Generate LLM-powered natural language explanation of plan vs execution divergence."""
     import json as _json
     from app.db.models import Run, Event
 
-    db = SessionLocal()
-    try:
-        run = db.query(Run).filter(Run.id == run_id).first()
-        if not run:
-            raise HTTPException(status_code=404, detail="Run not found")
+    run = db.query(Run).filter(Run.id == run_id).first()
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
 
-        # Get plan events
-        plan_events = (
-            db.query(Event)
-            .filter(Event.run_id == run_id, Event.type == "PLAN")
-            .order_by(Event.ts.asc())
-            .all()
+    # Get plan events
+    plan_events = (
+        db.query(Event)
+        .filter(Event.run_id == run_id, Event.type == "PLAN")
+        .order_by(Event.ts.asc())
+        .all()
+    )
+    planned_waypoints = []
+    for pe in plan_events:
+        payload = _json.loads(pe.payload_json)
+        wps = (payload.get("plan") or {}).get("waypoints") or []
+        planned_waypoints.extend(wps)
+
+    # Get execution events
+    exec_events = (
+        db.query(Event)
+        .filter(Event.run_id == run_id, Event.type == "EXECUTION")
+        .order_by(Event.ts.asc())
+        .all()
+    )
+    executed_commands = []
+    for ee in exec_events:
+        payload = _json.loads(ee.payload_json)
+        cmd = payload.get("command", {})
+        executed_commands.append(cmd)
+
+    # Get denial events
+    denial_events = (
+        db.query(Event)
+        .filter(Event.run_id == run_id, Event.type == "DECISION")
+        .order_by(Event.ts.asc())
+        .all()
+    )
+    denials = []
+    for de in denial_events:
+        payload = _json.loads(de.payload_json)
+        gov = payload.get("governance", {})
+        if gov.get("decision") != "APPROVED":
+            denials.append({
+                "decision": gov.get("decision"),
+                "policies": gov.get("policy_hits", []),
+                "reasons": gov.get("reasons", []),
+            })
+
+    # Get replan events
+    replan_events = (
+        db.query(Event)
+        .filter(Event.run_id == run_id, Event.type == "REPLAN")
+        .order_by(Event.ts.asc())
+        .all()
+    )
+    replans = []
+    for re_evt in replan_events:
+        payload = _json.loads(re_evt.payload_json)
+        replans.append(payload)
+
+    # Build explanation without LLM (deterministic, no external dependency)
+    explanation_parts = []
+
+    if not planned_waypoints:
+        explanation_parts.append("No LLM plan was generated for this run — the fallback planner was used exclusively.")
+    else:
+        explanation_parts.append(f"The LLM plan contained {len(planned_waypoints)} waypoints.")
+
+    if denials:
+        policy_counts: dict = {}
+        for d in denials:
+            for p in d.get("policies", []):
+                policy_counts[p] = policy_counts.get(p, 0) + 1
+        top_policies = sorted(policy_counts.items(), key=lambda x: x[1], reverse=True)[:3]
+        explanation_parts.append(
+            f"{len(denials)} actions were denied. Top blocking policies: "
+            + ", ".join(f"{p} ({c}x)" for p, c in top_policies) + "."
         )
-        planned_waypoints = []
-        for pe in plan_events:
-            payload = _json.loads(pe.payload_json)
-            wps = (payload.get("plan") or {}).get("waypoints") or []
-            planned_waypoints.extend(wps)
+    else:
+        explanation_parts.append("All proposed actions were approved — no governance denials occurred.")
 
-        # Get execution events
-        exec_events = (
-            db.query(Event)
-            .filter(Event.run_id == run_id, Event.type == "EXECUTION")
-            .order_by(Event.ts.asc())
-            .all()
+    if replans:
+        explanation_parts.append(
+            f"{len(replans)} replanning events occurred, triggered by consecutive denials "
+            "forcing the agent to find alternative routes."
         )
-        executed_commands = []
-        for ee in exec_events:
-            payload = _json.loads(ee.payload_json)
-            cmd = payload.get("command", {})
-            executed_commands.append(cmd)
 
-        # Get denial events
-        denial_events = (
-            db.query(Event)
-            .filter(Event.run_id == run_id, Event.type == "DECISION")
-            .order_by(Event.ts.asc())
-            .all()
-        )
-        denials = []
-        for de in denial_events:
-            payload = _json.loads(de.payload_json)
-            gov = payload.get("governance", {})
-            if gov.get("decision") != "APPROVED":
-                denials.append({
-                    "decision": gov.get("decision"),
-                    "policies": gov.get("policy_hits", []),
-                    "reasons": gov.get("reasons", []),
-                })
-
-        # Get replan events
-        replan_events = (
-            db.query(Event)
-            .filter(Event.run_id == run_id, Event.type == "REPLAN")
-            .order_by(Event.ts.asc())
-            .all()
-        )
-        replans = []
-        for re_evt in replan_events:
-            payload = _json.loads(re_evt.payload_json)
-            replans.append(payload)
-
-        # Build explanation without LLM (deterministic, no external dependency)
-        explanation_parts = []
-
-        if not planned_waypoints:
-            explanation_parts.append("No LLM plan was generated for this run — the fallback planner was used exclusively.")
-        else:
-            explanation_parts.append(f"The LLM plan contained {len(planned_waypoints)} waypoints.")
-
-        if denials:
-            policy_counts: dict = {}
-            for d in denials:
-                for p in d.get("policies", []):
-                    policy_counts[p] = policy_counts.get(p, 0) + 1
-            top_policies = sorted(policy_counts.items(), key=lambda x: x[1], reverse=True)[:3]
+    exec_count = len(executed_commands)
+    plan_count = len(planned_waypoints)
+    if plan_count > 0 and exec_count > 0:
+        ratio = exec_count / plan_count
+        if ratio > 1.5:
             explanation_parts.append(
-                f"{len(denials)} actions were denied. Top blocking policies: "
-                + ", ".join(f"{p} ({c}x)" for p, c in top_policies) + "."
+                f"The robot executed {exec_count} commands for {plan_count} planned waypoints, "
+                "indicating significant path adaptation beyond the original plan."
+            )
+        elif ratio < 0.5:
+            explanation_parts.append(
+                f"Only {exec_count} of {plan_count} planned waypoints were executed, "
+                "suggesting the run was stopped early or the plan was too ambitious."
             )
         else:
-            explanation_parts.append("All proposed actions were approved — no governance denials occurred.")
-
-        if replans:
             explanation_parts.append(
-                f"{len(replans)} replanning events occurred, triggered by consecutive denials "
-                "forcing the agent to find alternative routes."
+                f"Execution followed the plan closely ({exec_count} commands for {plan_count} waypoints)."
             )
 
-        exec_count = len(executed_commands)
-        plan_count = len(planned_waypoints)
-        if plan_count > 0 and exec_count > 0:
-            ratio = exec_count / plan_count
-            if ratio > 1.5:
-                explanation_parts.append(
-                    f"The robot executed {exec_count} commands for {plan_count} planned waypoints, "
-                    "indicating significant path adaptation beyond the original plan."
-                )
-            elif ratio < 0.5:
-                explanation_parts.append(
-                    f"Only {exec_count} of {plan_count} planned waypoints were executed, "
-                    "suggesting the run was stopped early or the plan was too ambitious."
-                )
-            else:
-                explanation_parts.append(
-                    f"Execution followed the plan closely ({exec_count} commands for {plan_count} waypoints)."
-                )
-
-        return {
-            "run_id": run_id,
-            "planned_waypoints": len(planned_waypoints),
-            "executed_commands": exec_count,
-            "denials": len(denials),
-            "replans": len(replans),
-            "explanation": " ".join(explanation_parts),
-        }
-    finally:
-        db.close()
+    return {
+        "run_id": run_id,
+        "planned_waypoints": len(planned_waypoints),
+        "executed_commands": exec_count,
+        "denials": len(denials),
+        "replans": len(replans),
+        "explanation": " ".join(explanation_parts),
+    }
 
 
 # ── Executed path for run (#3) ──
 
 @router.get("/runs/{run_id}/executed-path")
-def get_executed_path(run_id: str):
+def get_executed_path(run_id: str, db: Session = Depends(get_db)):
     """Get the actual executed positions for a completed/running run."""
     import json as _json
     from app.db.models import Run, Event, TelemetrySample
 
-    db = SessionLocal()
-    try:
-        run = db.query(Run).filter(Run.id == run_id).first()
-        if not run:
-            raise HTTPException(status_code=404, detail="Run not found")
+    run = db.query(Run).filter(Run.id == run_id).first()
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
 
-        # Build executed path from telemetry samples
-        samples = (
-            db.query(TelemetrySample)
-            .filter(TelemetrySample.run_id == run_id)
-            .order_by(TelemetrySample.ts.asc())
-            .all()
-        )
-        path = []
-        prev_x, prev_y = None, None
-        for s in samples:
-            try:
-                payload = _json.loads(s.payload_json)
-                x = float(payload.get("x", 0))
-                y = float(payload.get("y", 0))
-                # Downsample: only include points that moved > 0.1m
-                if prev_x is not None:
-                    d = ((x - prev_x) ** 2 + (y - prev_y) ** 2) ** 0.5
-                    if d < 0.1:
-                        continue
-                path.append({
-                    "x": round(x, 3),
-                    "y": round(y, 3),
-                    "speed": round(float(payload.get("speed", 0)), 3),
-                    "ts": s.ts.isoformat() if s.ts else None,
-                })
-                prev_x, prev_y = x, y
-            except Exception:
-                continue
+    # Build executed path from telemetry samples
+    samples = (
+        db.query(TelemetrySample)
+        .filter(TelemetrySample.run_id == run_id)
+        .order_by(TelemetrySample.ts.asc())
+        .all()
+    )
+    path = []
+    prev_x, prev_y = None, None
+    for s in samples:
+        try:
+            payload = _json.loads(s.payload_json)
+            x = float(payload.get("x", 0))
+            y = float(payload.get("y", 0))
+            # Downsample: only include points that moved > 0.1m
+            if prev_x is not None:
+                d = ((x - prev_x) ** 2 + (y - prev_y) ** 2) ** 0.5
+                if d < 0.1:
+                    continue
+            path.append({
+                "x": round(x, 3),
+                "y": round(y, 3),
+                "speed": round(float(payload.get("speed", 0)), 3),
+                "ts": s.ts.isoformat() if s.ts else None,
+            })
+            prev_x, prev_y = x, y
+        except Exception:
+            continue
 
-        # Also get planned waypoints for comparison
-        plan_event = (
-            db.query(Event)
-            .filter(Event.run_id == run_id, Event.type == "PLAN")
-            .order_by(Event.ts.desc())
-            .first()
-        )
-        planned = []
-        if plan_event:
-            try:
-                payload = _json.loads(plan_event.payload_json)
-                planned = (payload.get("plan") or {}).get("waypoints") or []
-            except Exception:
-                pass
+    # Also get planned waypoints for comparison
+    plan_event = (
+        db.query(Event)
+        .filter(Event.run_id == run_id, Event.type == "PLAN")
+        .order_by(Event.ts.desc())
+        .first()
+    )
+    planned = []
+    if plan_event:
+        try:
+            payload = _json.loads(plan_event.payload_json)
+            planned = (payload.get("plan") or {}).get("waypoints") or []
+        except Exception:
+            pass
 
-        return {
-            "run_id": run_id,
-            "executed_path": path,
-            "planned_waypoints": planned,
-            "executed_count": len(path),
-            "planned_count": len(planned),
-        }
-    finally:
-        db.close()
+    return {
+        "run_id": run_id,
+        "executed_path": path,
+        "planned_waypoints": planned,
+        "executed_count": len(path),
+        "planned_count": len(planned),
+    }
