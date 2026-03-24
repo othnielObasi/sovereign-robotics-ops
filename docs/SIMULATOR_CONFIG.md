@@ -169,9 +169,79 @@ The SIM connection is only needed for:
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/telemetry` | GET | Current robot state |
-| `/world` | GET | Map, obstacles, zones |
-| `/command` | POST | Send movement commands |
+| `/telemetry` | GET | Current robot state + perception |
+| `/world` | GET | Map, obstacles, zones, bays |
+| `/command` | POST | Send movement commands (MOVE_TO, STOP, WAIT) |
+| `/scenario` | POST | Inject a test scenario |
+| `/scenarios` | GET | List all scenarios with metadata |
+| `/scenarios/sequences` | GET | List scripted scenario sequences |
+| `/scenarios/sequences/{id}` | GET | Get steps for a specific sequence |
+
+## World Configuration
+
+The simulator loads `world.json` which defines the warehouse layout:
+
+| Zone | Y Range | Speed Limit | Description |
+|------|---------|-------------|-------------|
+| `aisle` | 0–12 | 0.5 m/s | Shelf aisles with pedestrian traffic |
+| `corridor` | 12–15 | 0.7 m/s | Transit corridor between zones |
+| `loading_bay` | 15–25 | 0.4 m/s | Dock area with forklifts and workers |
+
+Geofence: 40 m × 25 m (x: 0–40, y: 0–25)
+
+## Scenario Injection
+
+Inject deterministic scenarios to test governance policies:
+
+```bash
+# Place human ~2.5m ahead (triggers SLOW)
+curl -X POST http://localhost:8090/scenario \
+  -H "Content-Type: application/json" \
+  -d '{"scenario": "human_approach"}'
+
+# Reset to defaults
+curl -X POST http://localhost:8090/scenario \
+  -H "Content-Type: application/json" \
+  -d '{"scenario": "clear"}'
+```
+
+### Available Scenarios
+
+| Scenario | Policies Exercised | Expected State |
+|----------|-------------------|----------------|
+| `human_approach` | HUMAN_PROXIMITY_02 | SLOW |
+| `human_too_close` | HUMAN_PROXIMITY_02 | STOP |
+| `path_blocked` | OBSTACLE_CLEARANCE_03 | REPLAN |
+| `speed_violation` | SAFE_SPEED_01 | SLOW |
+| `geofence_breach` | GEOFENCE_01 | STOP |
+| `low_confidence` | UNCERTAINTY_04, HUMAN_PROXIMITY_02 | SLOW |
+| `multi_worker_congestion` | WORKER_PROXIMITY_06 | STOP |
+| `loading_bay_rush` | SAFE_SPEED_01, WORKER_PROXIMITY_06, OBSTACLE_CLEARANCE_03 | STOP |
+| `corridor_squeeze` | OBSTACLE_CLEARANCE_03, HUMAN_PROXIMITY_02 | STOP |
+| `clear` | — | SAFE (reset) |
+
+Injected scenarios hold for ~5 seconds before ambient walking behaviour resumes.
+
+## Scripted Sequences
+
+Pre-built scenario sequences for demos and testing:
+
+```bash
+# List available sequences
+curl http://localhost:8090/scenarios/sequences
+
+# Get the governance demo sequence (5 steps)
+curl http://localhost:8090/scenarios/sequences/governance_demo
+```
+
+| Sequence | Steps | Purpose |
+|----------|-------|---------|
+| `governance_demo` | 5 | Core governance reactions: clear → approach → stop → blocked → clear |
+| `policy_sweep` | 11 | Exercise every policy in the catalog sequentially |
+| `stress_test` | 7 | Rapidly trigger compound policy violations |
+
+Each step includes `scenario`, `hold_seconds`, and `narration` fields.  
+The caller is responsible for timing — inject each scenario, wait `hold_seconds`, then advance.
 
 ## Troubleshooting
 

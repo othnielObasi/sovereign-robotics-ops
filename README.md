@@ -118,15 +118,29 @@ Every 100ms while a mission is executing:
 | POST | `/missions` | Create mission |
 | POST | `/missions/{id}/start` | Start execution run |
 | POST | `/runs/{id}/stop` | Stop run |
+| POST | `/runs/{id}/pause` | Pause run (INTERVENTION logged) |
+| POST | `/runs/{id}/resume` | Resume paused run |
 | POST | `/governance/evaluate` | Evaluate action against policies |
-| GET | `/governance/decisions/{run_id}` | Query governance decision history |
-| GET | `/governance/receipts/{run_id}` | Get governance receipts for a run |
+| GET | `/governance/decisions/{run_id}` | Query decision history (filterable) |
+| GET | `/governance/decisions/{run_id}/stats` | Decision statistics & policy hit counts |
+| GET | `/governance/receipts/{run_id}` | Governance receipts (structured proofs) |
+| GET | `/governance/receipts/{run_id}/{id}` | Single governance receipt |
 | GET | `/policies` | List active policies with parameters |
 | POST | `/policies/test` | Test policy evaluation |
 | GET | `/compliance/report/{run_id}` | Generate compliance report (JSON/text) |
 | GET | `/compliance/verify/{run_id}` | Verify audit chain integrity |
 | POST | `/operator/approve` | Operator approves proposal |
+| POST | `/operator/override` | Operator override (resume/force_approve/replan) |
 | WS | `/ws/runs/{run_id}` | Real-time telemetry + decisions |
+
+### Simulator API (port 8090)
+
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/telemetry` | Robot state + perception |
+| POST | `/scenario` | Inject test scenario (10 available) |
+| GET | `/scenarios` | Scenario catalog with policy metadata |
+| GET | `/scenarios/sequences` | Scripted demo sequences |
 
 ## Deployment (Vultr)
 
