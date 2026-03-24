@@ -250,6 +250,47 @@ class RunService:
         if self._ws_broadcast:
             await self._ws_broadcast(run_id, {"kind": "status", "data": {"status": "running"}})
 
+    async def _post_run_analytics(self, run_id: str) -> None:
+        """Run heavy post-completion analytics in a background task.
+
+        This is fire-and-forget — the run is already committed as 'completed'.
+        Failures here are logged but never affect the run status.
+        """
+        from app.db.session import SessionLocal
+        db = SessionLocal()
+        try:
+            # Safety validation (#14)
+            try:
+                from app.services.safety_validator import validate_run_safety
+                safety = validate_run_safety(db, run_id)
+                if safety and safety.get("verdict") in ("FAILED", "FAILED_SAFETY"):
+                    run = db.query(Run).filter(Run.id == run_id).first()
+                    if run:
+                        run.status = "failed_safety"
+                        db.commit()
+                        logger.warning("Run %s failed safety validation: %s", run_id, safety.get("violations"))
+            except Exception as sv_err:
+                logger.warning("Post-run safety validation error for %s: %s", run_id, sv_err)
+
+            # Cross-run learning (#18) — limit to 5 recent runs to avoid DB overload
+            try:
+                from app.services.cross_run_learning import aggregate_cross_run_lessons
+                aggregate_cross_run_lessons(db, limit=5)
+            except Exception as crl_err:
+                logger.warning("Post-run cross-run learning error for %s: %s", run_id, crl_err)
+
+            # Extract lessons (#18)
+            try:
+                from app.services.persistent_memory import PersistentMemory
+                pmem = PersistentMemory()
+                pmem.extract_lessons_from_run(db, run_id)
+            except Exception as les_err:
+                logger.warning("Post-run lesson extraction error for %s: %s", run_id, les_err)
+        except Exception as e:
+            logger.warning("Post-run analytics failed for %s: %s", run_id, e)
+        finally:
+            db.close()
+
     MAX_CONSECUTIVE_TICK_ERRORS = 5
     AGENT_PROPOSAL_TIMEOUT = 15  # seconds
 
@@ -547,34 +588,16 @@ class RunService:
                         if mission:
                             mission.status = "completed"
 
-                        # Post-run safety validation (#14)
-                        try:
-                            from app.services.safety_validator import validate_run_safety
-                            safety = validate_run_safety(db, run.id)
-                            if safety and safety.get("verdict") == "FAILED":
-                                run.status = "failed_safety"
-                                logger.warning("Run %s failed safety validation: %s", run.id, safety.get("violations"))
-                        except Exception as sv_err:
-                            logger.warning("Safety validation error for run %s: %s", run.id, sv_err)
-
-                        # Cross-run learning aggregation (#18)
-                        try:
-                            from app.services.cross_run_learning import aggregate_cross_run_lessons
-                            aggregate_cross_run_lessons(db)
-                        except Exception:
-                            pass
-
-                        # Extract lessons from completed run (#18)
-                        try:
-                            from app.services.persistent_memory import PersistentMemory
-                            pmem = PersistentMemory()
-                            pmem.extract_lessons_from_run(db, run_id)
-                        except Exception:
-                            pass
-
+                        # Commit completion status IMMEDIATELY so the run is
+                        # never left as "running" even if post-run analytics fail.
                         db.commit()
+                        logger.info("Run %s completed (mission %s)", run_id, mission.id if mission else "?")
+
                         if self._ws_broadcast:
                             await self._ws_broadcast(run_id, {"kind": "status", "data": {"status": "completed"}})
+
+                        # Fire-and-forget: heavy post-run analytics in background
+                        asyncio.create_task(self._post_run_analytics(run_id))
                         break
 
                     # Tick succeeded — reset error counter
