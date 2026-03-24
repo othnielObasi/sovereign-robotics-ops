@@ -88,12 +88,33 @@ class RunService:
         return row
 
     def start_run(self, db: Session, mission_id: str) -> Run:
+        # Snapshot policy version at run start (#16)
+        from app.policies.versioning import policy_version_hash, policy_version_info
+        from app.db.models import PolicyVersion
+        import json as _json
+
+        pv_hash = policy_version_hash()
+        pv_info = policy_version_info()
+
+        # Upsert policy version record
+        existing_pv = db.query(PolicyVersion).filter(PolicyVersion.version_hash == pv_hash).first()
+        if not existing_pv:
+            pv_row = PolicyVersion(
+                version_hash=pv_hash,
+                parameters_json=_json.dumps(pv_info["parameters"], sort_keys=True),
+                created_at=utc_now(),
+                description=f"Auto-snapshot at run start",
+            )
+            db.add(pv_row)
+
         run = Run(
             id=new_id("run"),
             mission_id=mission_id,
             status="running",
             started_at=utc_now(),
             ended_at=None,
+            policy_version=pv_hash,
+            planning_mode="llm_with_fallback",
         )
         db.add(run)
         db.commit()
@@ -516,6 +537,23 @@ class RunService:
                         # Also mark the parent mission as completed
                         if mission:
                             mission.status = "completed"
+
+                        # Post-run safety validation (#14)
+                        try:
+                            from app.services.safety_validator import validate_run_safety
+                            safety = validate_run_safety(db, run.id)
+                            if safety and safety.get("verdict") == "FAILED":
+                                run.status = "failed_safety"
+                                logger.warning("Run %s failed safety validation: %s", run.id, safety.get("violations"))
+                        except Exception as sv_err:
+                            logger.warning("Safety validation error for run %s: %s", run.id, sv_err)
+
+                        # Cross-run learning aggregation (#18)
+                        try:
+                            from app.services.cross_run_learning import aggregate_cross_run_lessons
+                            aggregate_cross_run_lessons(db)
+                        except Exception:
+                            pass
 
                         # Extract lessons from completed run (#18)
                         try:

@@ -373,3 +373,69 @@ export async function getPolicyClassification() {
   if (!r.ok) throw new Error(await parseErrorResponse(r, "Failed to get policy classification"));
   return r.json();
 }
+
+// ---- Policy Version History (#16) ----
+
+export async function getPolicyVersions() {
+  const r = await fetchWithRetry(`${API_BASE}/policies/versions`, { cache: "no-store" });
+  if (!r.ok) throw new Error(await parseErrorResponse(r, "Failed to get policy versions"));
+  return r.json();
+}
+
+// ---- Safety Report (#14) ----
+
+export async function getRunSafetyReport(runId: string) {
+  const r = await fetchWithRetry(`${API_BASE}/runs/${runId}/safety-report`, { cache: "no-store" });
+  if (!r.ok) throw new Error(await parseErrorResponse(r, "Failed to get safety report"));
+  return r.json();
+}
+
+// ---- Adversarial Validation (#15) ----
+
+export async function runAdversarialValidation() {
+  const r = await fetchWithRetry(`${API_BASE}/adversarial/validate`, { cache: "no-store" });
+  if (!r.ok) throw new Error(await parseErrorResponse(r, "Failed to run adversarial validation"));
+  return r.json();
+}
+
+// ---- Semantic Memory Search (#17) ----
+
+export async function searchAgentMemory(query: string, category?: string) {
+  const params = new URLSearchParams({ query });
+  if (category) params.set("category", category);
+  const r = await fetchWithRetry(`${API_BASE}/agent/memory/search?${params}`, { cache: "no-store" });
+  if (!r.ok) throw new Error(await parseErrorResponse(r, "Failed to search memory"));
+  return r.json();
+}
+
+// ---- Cross-Run Learning (#18) ----
+
+export async function getCrossRunLearning() {
+  const r = await fetchWithRetry(`${API_BASE}/agent/cross-run-learning`, { cache: "no-store" });
+  if (!r.ok) throw new Error(await parseErrorResponse(r, "Failed to get cross-run learning"));
+  return r.json();
+}
+
+// ---- Score Trends (#10) ----
+
+export async function getScoreTrends(limit = 20) {
+  const r = await fetchWithRetry(`${API_BASE}/analytics/score-trends?limit=${limit}`, { cache: "no-store" });
+  if (!r.ok) throw new Error(await parseErrorResponse(r, "Failed to get score trends"));
+  return r.json();
+}
+
+// ---- Divergence Explanation (#20) ----
+
+export async function getDivergenceExplanation(runId: string) {
+  const r = await fetchWithRetry(`${API_BASE}/runs/${runId}/divergence-explanation`, { method: "POST" });
+  if (!r.ok) throw new Error(await parseErrorResponse(r, "Failed to get divergence explanation"));
+  return r.json();
+}
+
+// ---- Executed Path (#3) ----
+
+export async function getExecutedPath(runId: string) {
+  const r = await fetchWithRetry(`${API_BASE}/runs/${runId}/executed-path`, { cache: "no-store" });
+  if (!r.ok) throw new Error(await parseErrorResponse(r, "Failed to get executed path"));
+  return r.json();
+}

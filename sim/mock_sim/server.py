@@ -66,6 +66,12 @@ class Command(BaseModel):
     params: Dict[str, Any] = Field(default_factory=dict)
 
 
+class PathSmoothRequest(BaseModel):
+    """Request for Bezier path smoothing."""
+    waypoints: List[Dict[str, float]] = Field(..., description="List of {x, y} waypoints")
+    resolution: int = Field(default=20, ge=5, le=100, description="Points per Bezier segment")
+
+
 class ScenarioRequest(BaseModel):
     scenario: str = Field(
         ...,
@@ -700,3 +706,91 @@ def get_sequence(request: Request, sequence_id: str):
     if not seq:
         raise HTTPException(status_code=404, detail=f"Unknown sequence: {sequence_id}")
     return seq
+
+
+# ---------------------------------------------------------------------------
+# Bezier path smoothing (#6)
+# ---------------------------------------------------------------------------
+
+def _quadratic_bezier(p0: Dict[str, float], p1: Dict[str, float], p2: Dict[str, float], t: float) -> Dict[str, float]:
+    """Evaluate a quadratic Bezier curve at parameter t ∈ [0,1]."""
+    u = 1 - t
+    return {
+        "x": u * u * p0["x"] + 2 * u * t * p1["x"] + t * t * p2["x"],
+        "y": u * u * p0["y"] + 2 * u * t * p1["y"] + t * t * p2["y"],
+    }
+
+
+def _smooth_path(waypoints: List[Dict[str, float]], resolution: int = 20) -> List[Dict[str, float]]:
+    """Generate a smooth path through waypoints using quadratic Bezier curves.
+
+    For each pair of consecutive waypoints, we use the midpoints as
+    on-curve points and the waypoints themselves as control points.
+    The resulting path is C1 continuous and passes near all waypoints.
+    """
+    if len(waypoints) < 2:
+        return waypoints
+
+    if len(waypoints) == 2:
+        # Simple linear interpolation
+        pts = []
+        for i in range(resolution + 1):
+            t = i / resolution
+            pts.append({
+                "x": round(waypoints[0]["x"] + t * (waypoints[1]["x"] - waypoints[0]["x"]), 4),
+                "y": round(waypoints[0]["y"] + t * (waypoints[1]["y"] - waypoints[0]["y"]), 4),
+            })
+        return pts
+
+    # Compute midpoints between consecutive waypoints
+    midpoints = []
+    for i in range(len(waypoints) - 1):
+        midpoints.append({
+            "x": (waypoints[i]["x"] + waypoints[i + 1]["x"]) / 2,
+            "y": (waypoints[i]["y"] + waypoints[i + 1]["y"]) / 2,
+        })
+
+    result = [{"x": round(waypoints[0]["x"], 4), "y": round(waypoints[0]["y"], 4)}]
+
+    # First segment: from first waypoint to first midpoint, control = first waypoint
+    for j in range(1, resolution + 1):
+        t = j / resolution
+        pt = _quadratic_bezier(waypoints[0], waypoints[0], midpoints[0], t)
+        result.append({"x": round(pt["x"], 4), "y": round(pt["y"], 4)})
+
+    # Middle segments: from midpoint[i-1] to midpoint[i], control = waypoint[i]
+    for i in range(1, len(midpoints)):
+        for j in range(1, resolution + 1):
+            t = j / resolution
+            pt = _quadratic_bezier(midpoints[i - 1], waypoints[i], midpoints[i], t)
+            result.append({"x": round(pt["x"], 4), "y": round(pt["y"], 4)})
+
+    # Last segment: from last midpoint to last waypoint
+    last_mid = midpoints[-1]
+    last_wp = waypoints[-1]
+    for j in range(1, resolution + 1):
+        t = j / resolution
+        pt = _quadratic_bezier(last_mid, last_wp, last_wp, t)
+        result.append({"x": round(pt["x"], 4), "y": round(pt["y"], 4)})
+
+    return result
+
+
+@app.post("/path/smooth")
+def smooth_path(request: Request, body: PathSmoothRequest):
+    """Generate a Bezier-smoothed path from waypoints (#6).
+
+    Input: array of {x, y} waypoints.
+    Output: dense array of smooth points following quadratic Bezier curves.
+    """
+    _require_sim_token(request)
+    if len(body.waypoints) < 2:
+        return {"waypoints": body.waypoints, "smoothed": body.waypoints, "count": len(body.waypoints)}
+
+    smoothed = _smooth_path(body.waypoints, resolution=body.resolution)
+    return {
+        "waypoints": body.waypoints,
+        "smoothed": smoothed,
+        "count": len(smoothed),
+        "resolution": body.resolution,
+    }

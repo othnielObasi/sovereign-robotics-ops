@@ -44,6 +44,10 @@ class Run(Base):
     status = Column(String, nullable=False)  # running|paused|stopped|completed|failed
     started_at = Column(DateTime(timezone=True), nullable=False)
     ended_at = Column(DateTime(timezone=True), nullable=True)
+    policy_version = Column(String, nullable=True)  # hash of policy params at start
+    planning_mode = Column(String, nullable=True)  # gemini|agentic|fallback
+    safety_verdict = Column(String, nullable=True)  # PASSED|FAILED_SAFETY|PENDING
+    safety_report_json = Column(Text, nullable=True)  # JSON post-run safety validation
 
     mission = relationship("Mission", back_populates="runs")
     events = relationship("Event", back_populates="run", cascade="all, delete-orphan")
@@ -132,3 +136,14 @@ class AgentMemoryEntry(Base):
     __table_args__ = (
         Index("ix_agent_memory_cat_importance", "category", "importance"),
     )
+
+
+class PolicyVersion(Base):
+    """Immutable snapshot of policy parameters at a point in time."""
+    __tablename__ = "policy_versions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    version_hash = Column(String, nullable=False, unique=True, index=True)
+    parameters_json = Column(Text, nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False)
+    description = Column(Text, nullable=True)

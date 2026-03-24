@@ -5,6 +5,11 @@
     "min_y": 0,
     "max_y": 25
   },
+  "zone_speed_limits": {
+    "aisle": 0.5,
+    "corridor": 0.7,
+    "loading_bay": 0.4
+  },
   "zones": [
     {
       "name": "aisle",

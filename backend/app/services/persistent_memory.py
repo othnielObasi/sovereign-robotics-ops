@@ -142,6 +142,105 @@ class PersistentMemory:
         """Recall denial patterns for planning avoidance."""
         return self.recall(db, category=CATEGORY_DENIAL_PATTERN, limit=limit)
 
+    def recall_similar(
+        self,
+        db: Session,
+        query: str,
+        category: Optional[str] = None,
+        limit: int = 10,
+        threshold: float = 0.1,
+    ) -> List[Dict[str, Any]]:
+        """Semantic similarity retrieval using TF-IDF cosine similarity.
+
+        No external dependencies — uses pure-Python TF-IDF over stored entries.
+        Returns entries sorted by similarity score above threshold.
+        """
+        import math
+        import re as _re
+
+        # Tokenize helper
+        def tokenize(text: str) -> List[str]:
+            return _re.findall(r"[a-z0-9_]+", text.lower())
+
+        query_tokens = tokenize(query)
+        if not query_tokens:
+            return self.recall(db, category=category, limit=limit)
+
+        # Fetch candidate entries
+        q = db.query(AgentMemoryEntry)
+        if category:
+            q = q.filter(AgentMemoryEntry.category == category)
+        candidates = q.order_by(AgentMemoryEntry.ts.desc()).limit(500).all()
+
+        if not candidates:
+            return []
+
+        # Build document corpus
+        docs: List[List[str]] = []
+        for c in candidates:
+            text = c.content_json or ""
+            docs.append(tokenize(text))
+
+        # IDF from corpus
+        doc_count = len(docs) + 1  # +1 for query
+        term_doc_freq: Dict[str, int] = {}
+        all_docs_plus_query = docs + [query_tokens]
+        for d in all_docs_plus_query:
+            seen = set(d)
+            for t in seen:
+                term_doc_freq[t] = term_doc_freq.get(t, 0) + 1
+
+        idf: Dict[str, float] = {}
+        for term, df in term_doc_freq.items():
+            idf[term] = math.log((doc_count + 1) / (df + 1)) + 1
+
+        # TF-IDF vector for query
+        def tfidf_vector(tokens: List[str]) -> Dict[str, float]:
+            tf: Dict[str, int] = {}
+            for t in tokens:
+                tf[t] = tf.get(t, 0) + 1
+            vec: Dict[str, float] = {}
+            for t, count in tf.items():
+                vec[t] = (1 + math.log(count)) * idf.get(t, 1.0)
+            return vec
+
+        def cosine_sim(v1: Dict[str, float], v2: Dict[str, float]) -> float:
+            intersection = set(v1) & set(v2)
+            if not intersection:
+                return 0.0
+            dot = sum(v1[t] * v2[t] for t in intersection)
+            mag1 = math.sqrt(sum(x * x for x in v1.values()))
+            mag2 = math.sqrt(sum(x * x for x in v2.values()))
+            if mag1 == 0 or mag2 == 0:
+                return 0.0
+            return dot / (mag1 * mag2)
+
+        q_vec = tfidf_vector(query_tokens)
+
+        # Score each candidate
+        scored = []
+        for i, c in enumerate(candidates):
+            d_vec = tfidf_vector(docs[i])
+            sim = cosine_sim(q_vec, d_vec)
+            if sim >= threshold:
+                scored.append((sim, c))
+
+        # Sort by similarity descending
+        scored.sort(key=lambda x: x[0], reverse=True)
+
+        return [
+            {
+                "id": c.id,
+                "run_id": c.run_id,
+                "category": c.category,
+                "ts": c.ts.isoformat() if c.ts else None,
+                "content": json.loads(c.content_json),
+                "importance": c.importance,
+                "similarity": round(sim, 4),
+            }
+            for sim, c in scored[:limit]
+        ]
+
     def recall_for_context(self, db: Session, max_tokens: int = 1500) -> str:
         """Build a text context string from memory for LLM prompts."""
         entries = self.recall(db, limit=15)

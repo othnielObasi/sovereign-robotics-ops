@@ -41,9 +41,13 @@ ZONES: List[Dict[str, Any]] = _world.get("zones") or _DEFAULT_ZONES
 BAYS: List[Dict[str, Any]] = _world.get("bays") or _DEFAULT_BAYS
 OBSTACLES: List[Dict[str, Any]] = _world.get("obstacles") or []
 
-# Zone speed limits — derived from zone names
-ZONE_SPEED_LIMITS: Dict[str, float] = {
+# Zone speed limits — loaded from world.json, with hardcoded fallback (#24)
+_DEFAULT_ZONE_SPEED_LIMITS = {
     "aisle": 0.5,
     "corridor": 0.7,
     "loading_bay": 0.4,
 }
+_raw_limits = _world.get("zone_speed_limits") or {}
+ZONE_SPEED_LIMITS: Dict[str, float] = {
+    k: float(v) for k, v in _raw_limits.items()
+} if _raw_limits else dict(_DEFAULT_ZONE_SPEED_LIMITS)

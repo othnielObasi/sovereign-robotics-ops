@@ -56,6 +56,8 @@ export function Map2D({
   safetyState = "OK",
   hoveredWaypointIdx = null,
   riskCells = [],
+  executedPath = [],
+  destinationBayId = null,
 }: {
   world: any | null;
   telemetry: any | null;
@@ -67,6 +69,8 @@ export function Map2D({
   safetyState?: string;
   hoveredWaypointIdx?: number | null;
   riskCells?: Array<{ x: number; y: number; risk: number }>;
+  executedPath?: Array<Pt>;
+  destinationBayId?: string | null;
 }) {
   const ref = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -479,6 +483,85 @@ export function Map2D({
           ctx.arc(p.x, p.y, 2, 0, Math.PI * 2);
           ctx.fill();
         }
+      }
+    }
+
+    /* ── executed path overlay (#3) ────────────────────────── */
+    if (executedPath && executedPath.length >= 2) {
+      /* Thick translucent underline */
+      ctx.strokeStyle = "rgba(16,185,129,0.15)";
+      ctx.lineWidth = 7;
+      ctx.beginPath();
+      const ef = w2c(executedPath[0]);
+      ctx.moveTo(ef.x, ef.y);
+      for (let i = 1; i < executedPath.length; i++) {
+        const pt = w2c(executedPath[i]);
+        ctx.lineTo(pt.x, pt.y);
+      }
+      ctx.stroke();
+
+      /* Solid green line */
+      ctx.strokeStyle = "#10b981";
+      ctx.lineWidth = 2.5;
+      ctx.setLineDash([]);
+      ctx.beginPath();
+      ctx.moveTo(ef.x, ef.y);
+      for (let i = 1; i < executedPath.length; i++) {
+        const pt = w2c(executedPath[i]);
+        ctx.lineTo(pt.x, pt.y);
+      }
+      ctx.stroke();
+
+      /* Direction dots every 5 points */
+      for (let i = 0; i < executedPath.length; i += 5) {
+        const pt = w2c(executedPath[i]);
+        ctx.fillStyle = `rgba(16,185,129,${0.3 + (i / executedPath.length) * 0.7})`;
+        ctx.beginPath();
+        ctx.arc(pt.x, pt.y, 2.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    /* ── destination bay highlight (#25) ─────────────────── */
+    if (destinationBayId) {
+      const destBay = bays.find((b: any) => b.id === destinationBayId);
+      if (destBay && typeof destBay.x === "number") {
+        const dp = w2c({ x: +destBay.x, y: +destBay.y });
+        const isDock = destBay.type === "dock";
+        const bw = isDock ? 4 * baseScale * zoom : 1.5 * baseScale * zoom;
+        const bh = isDock ? 1.2 * baseScale * zoom : 3 * baseScale * zoom;
+
+        /* Pulsing highlight ring */
+        const highlightR = Math.max(bw, bh) * 0.8;
+        ctx.save();
+        ctx.strokeStyle = `rgba(16,185,129,${0.4 + pulse * 0.5})`;
+        ctx.lineWidth = 3;
+        ctx.shadowColor = "rgba(16,185,129,0.4)";
+        ctx.shadowBlur = 12;
+        ctx.beginPath();
+        ctx.arc(dp.x, dp.y, highlightR, 0, Math.PI * 2);
+        ctx.stroke();
+
+        /* Outer expanding pulse */
+        ctx.strokeStyle = `rgba(16,185,129,${0.15 * (1 - pulse)})`;
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(dp.x, dp.y, highlightR + pulse * 10, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+
+        /* Destination label */
+        ctx.fillStyle = "#10b981";
+        ctx.font = `bold ${Math.max(9, 11 * zoom)}px system-ui`;
+        ctx.textAlign = "center";
+        ctx.textBaseline = isDock ? "bottom" : "top";
+        const labelY = isDock ? dp.y - bh / 2 - highlightR - 4 : dp.y + bh / 2 + highlightR + 4;
+        ctx.strokeStyle = "rgba(0,0,0,0.6)";
+        ctx.lineWidth = 3;
+        ctx.strokeText(`DEST: ${destinationBayId}`, dp.x, labelY);
+        ctx.fillText(`DEST: ${destinationBayId}`, dp.x, labelY);
+        ctx.textAlign = "start";
+        ctx.textBaseline = "alphabetic";
       }
     }
 
@@ -1033,6 +1116,7 @@ export function Map2D({
       { color: "rgba(245,158,11,0.6)", label: "Bay/Dock" },
       { color: C.path, label: "Path" },
       { color: C.plan, label: "LLM Plan" },
+      { color: "#10b981", label: "Executed" },
       { color: C.target, label: "Target" },
     ];
     const lx = W - 80,
@@ -1053,7 +1137,7 @@ export function Map2D({
       ctx.textBaseline = "top";
       ctx.fillText(it.label, lx + 12, y);
     });
-  }, [world, telemetry, pathPoints, planWaypoints, baseScale, zoom, pan, showHeatmap, showTrail, safetyState, tick, pad, zones, obstacles, human, walkingHumans, idleRobots, bays, geo, W, H, riskCells]);
+  }, [world, telemetry, pathPoints, planWaypoints, baseScale, zoom, pan, showHeatmap, showTrail, safetyState, tick, pad, zones, obstacles, human, walkingHumans, idleRobots, bays, geo, W, H, riskCells, executedPath, destinationBayId]);
 
   /* ── Minimap (when zoomed > 1.5x) ─────────────────────────── */
   useEffect(() => {
