@@ -50,8 +50,8 @@ class TestScoringEngine:
     def test_compute_scorecard_missing_run(self):
         """Score a non-existent run returns error."""
         from app.services.scoring_engine import compute_scorecard
-        from app.db.session import SessionLocal
-        db = SessionLocal()
+        from conftest import _TestSession
+        db = _TestSession()
         try:
             result = compute_scorecard(db, "nonexistent-run-id")
             assert result.get("error") == "run_not_found"
