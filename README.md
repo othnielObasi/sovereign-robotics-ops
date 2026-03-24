@@ -1,154 +1,180 @@
-# Sovereign AI Robotics Ops
+# Sovereign Robotics Ops
 
-> **Track 1: Autonomous Robotics Control in Simulation**
-> 
-> The governance layer for autonomous robot control. We're not building the robot brain — we're building the **robot conscience**.
+> Runtime governance for autonomous robots. Every action evaluated, every decision traceable, every violation blocked.
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.11-blue.svg)](https://python.org)
 [![Next.js](https://img.shields.io/badge/next.js-14-black.svg)](https://nextjs.org)
 
-## 🎯 What We Do
+## The Problem
 
-Sovereign Robotics Ops is a **real-time governance layer** for autonomous robots that:
+Autonomous robots in warehouses, factories, and logistics don't have a compliance layer. When a robot makes a dangerous decision — moving too fast near a worker, ignoring a geofence, operating with degraded sensors — there's no enforcement point. Logs exist, but they record what happened *after* the incident.
 
-- **Evaluates every action** against configurable safety policies
-- **Reacts to environmental changes** (humans, obstacles) with STOP/SLOW/REPLAN
-- **Logs every decision** with SHA-256 cryptographic proof
-- **Enables safe sim-to-real transfer** by governing behavior, not just logging it
+## What Sovereign Does
 
-## 🚀 Quick Start
+Sovereign Robotics Ops is a **runtime governance layer** that sits between the robot's AI planner and the physical actuators. Every proposed action is intercepted, evaluated against safety policies, and either approved, modified, or blocked — before execution.
+
+**Core guarantees:**
+
+| Capability | What It Means |
+|---|---|
+| **Policy enforcement** | 6+ safety policies evaluated per action (geofence, speed limits, human proximity, obstacle clearance, uncertainty, HITL escalation) |
+| **Intervention controls** | SAFE → SLOW → STOP → REPLAN state machine with operator escalation |
+| **Tamper-proof audit trail** | SHA-256 hash-chained event log — every decision, every reason, every context |
+| **Governance receipts** | Structured proof of why each action was allowed or blocked, queryable per run/policy/time |
+| **Compliance mapping** | ISO 42001, EU AI Act, NIST AI RMF — framework-aligned reports with chain verification |
+| **Operator oversight** | HITL triggers when risk exceeds threshold; approval/deny/override workflows |
+
+## Who It's For
+
+**Initial wedge:** Warehouse and logistics robotics operators (AMRs, AGVs) who need to demonstrate safety compliance to insurers, regulators, or enterprise customers.
+
+**Broader market:** Any autonomous system where AI decisions must be auditable and enforceable — delivery robots, construction, agriculture, defense.
+
+## Why Now
+
+- **EU AI Act** (2026 enforcement) classifies autonomous robotics as high-risk AI — mandatory risk management, human oversight, and audit trails
+- **ISO 42001** adoption accelerating — organizations need governance tooling, not just policies on paper
+- Warehouse robotics market growing 14% CAGR — more robots, more compliance surface area
+- No existing product provides runtime governance (monitoring tools watch; Sovereign *enforces*)
+
+## Quick Start
 
 ```bash
-# Clone and run
 git clone <repo>
 cd sovereign-robotics-ops
 docker-compose up -d
 
-# Access
-# Frontend: http://localhost:3000
-# Backend API: http://localhost:8080
-# Demo Page: http://localhost:3000/demo
-# API Docs: http://localhost:8080/docs
+# Frontend:  http://localhost:3000
+# API:       http://localhost:8080
+# API Docs:  http://localhost:8080/docs
+# Demo:      http://localhost:3000/demo
 ```
 
-## 📁 Project Structure
+## Architecture
 
 ```
-sovereign-robotics-ops/
-├── backend/                 # FastAPI backend (Python 3.11)
-│   ├── app/
-│   │   ├── api/            # REST endpoints
-│   │   ├── auth/           # JWT authentication
-│   │   ├── db/             # SQLAlchemy models & session
-│   │   ├── services/       # Governance engine, compliance reports
-│   │   ├── policies/       # Safety policy definitions (YAML catalog)
-│   │   └── schemas/        # Pydantic models
-│   ├── alembic/            # Database migrations
-│   └── tests/              # Backend test suite
-├── frontend/               # Next.js 14 dashboard (React/TypeScript)
-│   └── src/
-│       ├── app/            # Pages (demo, runs, policies, audit)
-│       └── components/     # Map2DEnhanced, Timeline, NavLinks
-├── sim/                    # Mock robot simulator (FastAPI)
-├── deploy/                 # Deployment scripts & submission
-├── docs/                   # Architecture, API, deploy guides
-├── infra/                  # Grafana dashboards
-└── .github/workflows/      # CI/CD (tests, Vultr deploy)
+┌─────────────────────────────────────────────────────────┐
+│                    Operator Dashboard                    │
+│           (Next.js — missions, runs, compliance)        │
+└───────────────────────┬─────────────────────────────────┘
+                        │ REST + WebSocket
+┌───────────────────────▼─────────────────────────────────┐
+│                   Governance API                         │
+│  ┌──────────┐  ┌──────────────┐  ┌──────────────────┐  │
+│  │ Mission  │  │   Policy     │  │   Compliance     │  │
+│  │ Lifecycle│  │   Engine     │  │   Reporting      │  │
+│  │          │  │              │  │                  │  │
+│  │ create → │  │ evaluate()   │  │ ISO 42001        │  │
+│  │ plan →   │  │ 6 policies   │  │ EU AI Act        │  │
+│  │ execute  │  │ risk scoring │  │ NIST AI RMF      │  │
+│  └────┬─────┘  └──────┬───────┘  └────────┬─────────┘  │
+│       │               │                    │            │
+│  ┌────▼───────────────▼────────────────────▼─────────┐  │
+│  │        Chain-of-Trust Event Store                  │  │
+│  │   SHA-256 linked events • governance decisions     │  │
+│  │   telemetry samples • operator approvals           │  │
+│  └────────────────────┬──────────────────────────────┘  │
+│                       │                                  │
+│  ┌────────────────────▼──────────────────────────────┐  │
+│  │           Agent Router                             │  │
+│  │   Simple (deterministic) │ Gemini │ Agentic ReAct  │  │
+│  └────────────────────┬──────────────────────────────┘  │
+└───────────────────────┼─────────────────────────────────┘
+                        │ HTTP
+┌───────────────────────▼─────────────────────────────────┐
+│              Simulator / Robot Interface                  │
+│   Mock sim (warehouse) │ Gazebo │ Isaac Sim │ Physical   │
+└─────────────────────────────────────────────────────────┘
 ```
 
-Developer guide: See [docs/DEVELOPER.md](docs/DEVELOPER.md) for internal
-architecture, CI, and provisioning runbook.
+## Runtime Loop
 
-## 🎮 Demo Scenarios
+Every 100ms while a mission is executing:
 
-The `/demo` page includes 4 interactive scenarios:
+1. **Poll telemetry** — position, speed, zone, human proximity, obstacles
+2. **Propose action** — agent generates MOVE_TO/STOP/WAIT with rationale
+3. **Evaluate governance** — all policies scored; decision = APPROVED/DENIED/NEEDS_REVIEW
+4. **Record decision** — hash-chained event with full context + governance receipt
+5. **Execute or block** — only APPROVED actions reach the simulator
+6. **Broadcast** — real-time WebSocket feed to operator dashboard
 
-| Scenario | Status | Risk | What Happens |
-|----------|--------|------|--------------|
-| Safe Operation | 🟢 SAFE | 0.15 | Robot moves freely |
-| Human Approaching | 🟡 SLOW | 0.52 | Speed reduced |
-| Human Too Close | 🔴 STOP | 0.85 | Robot halted |
-| Path Blocked | 🔵 REPLAN | 0.45 | Recalculating route |
+## Safety Policies
 
-## 🔌 API Endpoints
+| Policy | Severity | Trigger |
+|---|---|---|
+| `GEOFENCE_01` | HIGH | Robot or destination outside operating boundary |
+| `SAFE_SPEED_01` | HIGH | Speed exceeds zone limit (aisle: 0.5, loading bay: 0.4, corridor: 0.7 m/s) |
+| `HUMAN_PROXIMITY_02` | HIGH | Human within 3m → SLOW; within 1m → STOP |
+| `OBSTACLE_CLEARANCE_03` | HIGH | Obstacle clearance < 0.5m |
+| `UNCERTAINTY_04` | MEDIUM | Human detected but sensor confidence < 65% |
+| `HITL_05` | HIGH | Risk score > 0.75 → escalate to operator |
+
+## API Endpoints
 
 | Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/health` | Health check |
-| POST | `/runs` | Create new run |
-| POST | `/governance/evaluate` | Evaluate action |
-| GET | `/governance/policies` | List policies |
-| GET | `/compliance/report/{run_id}` | Generate compliance report |
-| WS | `/ws/{run_id}` | Real-time updates |
+|---|---|---|
+| GET | `/health` | Health check (DB + simulator) |
+| POST | `/missions` | Create mission |
+| POST | `/missions/{id}/start` | Start execution run |
+| POST | `/runs/{id}/stop` | Stop run |
+| POST | `/governance/evaluate` | Evaluate action against policies |
+| GET | `/governance/decisions/{run_id}` | Query governance decision history |
+| GET | `/governance/receipts/{run_id}` | Get governance receipts for a run |
+| GET | `/policies` | List active policies with parameters |
+| POST | `/policies/test` | Test policy evaluation |
+| GET | `/compliance/report/{run_id}` | Generate compliance report (JSON/text) |
+| GET | `/compliance/verify/{run_id}` | Verify audit chain integrity |
+| POST | `/operator/approve` | Operator approves proposal |
+| WS | `/ws/runs/{run_id}` | Real-time telemetry + decisions |
 
-## 📊 Governance Features
+## Deployment (Vultr)
 
-### Policy Engine
-- Weighted policy scoring
-- Configurable risk thresholds
-- Sub-100ms evaluation
-
-### Chain of Trust
-- SHA-256 hash chain
-- Tamper-proof audit trail
-- Compliance report export
-
-### Safety Policies
-- `human-presence`: Deny if human within 1.5m
-- `speed-limit`: Enforce max speed near humans
-- `collision-risk`: Check path for obstacles
-- `battery-threshold`: Warn if battery < 20%
-
-## 🛠 Deployment (Vultr)
-
-This project deploys to a single Vultr VM. Pushing to `main` triggers auto-deployment via GitHub Actions.
-
-Quick deploy (manual):
+Production deploys to a single Vultr VM. Pushing to `main` auto-deploys via GitHub Actions.
 
 ```bash
-# On the Vultr VM
-git clone <repo>
-cd sovereign-robotics-ops
+# Manual deploy on VM
 docker compose -f docker-compose.vultr.yml up --build -d
 ```
 
-Notes:
-- `docker-compose.vultr.yml` orchestrates all services with health checks, resource limits, and network isolation.
-- See `deploy/vultr-deploy.sh` for the full provisioning script (Nginx, SSL, backups).
-- Use PostgreSQL in production; local dev may use SQLite via `docker-compose.yml`.
+See [docs/DEVELOPER.md](docs/DEVELOPER.md) for local development and [deploy/vultr-deploy.sh](deploy/vultr-deploy.sh) for full provisioning.
 
-## 📦 Submission & Packaging
+## Project Structure
 
-We provide a convenience packaging script and guidance for reviewers and judges.
+```
+sovereign-robotics-ops/
+├── backend/                 # FastAPI governance API (Python 3.11)
+│   ├── app/
+│   │   ├── api/            # REST endpoints
+│   │   ├── auth/           # JWT authentication
+│   │   ├── db/             # SQLAlchemy models + migrations
+│   │   ├── policies/       # Safety policy definitions
+│   │   ├── schemas/        # Pydantic request/response models
+│   │   ├── services/       # Governance engine, run lifecycle, compliance
+│   │   └── utils/          # Hashing, IDs, time
+│   ├── alembic/            # Database migrations
+│   └── tests/              # Backend test suite
+├── frontend/               # Next.js 14 operator dashboard
+│   └── src/
+│       ├── app/            # Pages (dashboard, demo, runs, compliance, audit, policies)
+│       └── components/     # Map2D, Timeline, Alerts
+├── sim/                    # Mock warehouse simulator
+├── deploy/                 # Deployment scripts
+├── docs/                   # Architecture, API, guides
+└── .github/workflows/      # CI + auto-deploy to Vultr
+```
 
-- Use `scripts/package_submission.sh [path/to/sro_demo.mp4]` to create a release archive in `deploy/`.
-- The script includes `frontend/`, `backend/`, `docker-compose.vultr.yml`, and (optionally) the demo video.
-- See `deploy/README_SUBMISSION.md` for quick reviewer steps.
+## Documentation
 
-Status: NVIDIA Brev + Isaac Sim credits have been claimed; Isaac Sim integration is planned but not included in this submission.
+| Document | Purpose |
+|---|---|
+| [docs/architecture.md](docs/architecture.md) | System architecture and data flow |
+| [docs/api.md](docs/api.md) | API reference |
+| [docs/DEVELOPER.md](docs/DEVELOPER.md) | Local dev setup, CI, provisioning |
+| [docs/one-pager.md](docs/one-pager.md) | Product overview for stakeholders |
+| [docs/pilot-use-cases.md](docs/pilot-use-cases.md) | Target deployment scenarios |
+| [docs/whitepaper.md](docs/whitepaper.md) | Technical whitepaper |
 
-## 📋 Compliance Frameworks
+## License
 
-The platform supports multiple compliance frameworks:
-
-- **ISO/IEC 42001:2023** - AI Management System
-- **EU AI Act** - Articles 9-15 for high-risk AI
-- **NIST AI RMF** - GOVERN, MAP, MEASURE, MANAGE
-
-## 👥 Team
-
-**Sovereign AI Labs**
-
-- Othniel Obasi - Founder & CEO
-
-
-## 📄 License
-
-MIT License - see [LICENSE](LICENSE) for details.
-
----
-
-**Launch & Fund Your Startup: AI Meets Robotics Hackathon**
-
-February 6-15, 2026 | lablab.ai
+MIT — see [LICENSE](LICENSE).
