@@ -35,8 +35,9 @@ class SimpleAgent:
         # If governance previously denied/reviewed due to speed/human/obstacle, slow down
         if last_governance:
             hits = set(last_governance.get("policy_hits", []))
-            if {"SAFE_SPEED_01", "HUMAN_CLEARANCE_02", "OBSTACLE_CLEARANCE_03", "UNCERTAINTY_04"} & hits:
-                speed = 0.4
+            if {"SAFE_SPEED_01", "HUMAN_CLEARANCE_02", "HUMAN_PROXIMITY_02",
+                "OBSTACLE_CLEARANCE_03", "UNCERTAINTY_04"} & hits:
+                speed = 0.2  # Well below MAX_SPEED_NEAR_HUMAN (0.4)
 
         return ActionProposal(
             intent="MOVE_TO",

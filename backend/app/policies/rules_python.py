@@ -122,15 +122,18 @@ def evaluate_policies(telemetry: Dict[str, Any], proposal: ActionProposal) -> Go
         policy_state = "STOP"
 
     elif intent == "MOVE_TO" and prox_dist < HUMAN_SLOW_RADIUS_M:
-        policy_key = "WORKER_PROXIMITY_06" if use_worker else "HUMAN_PROXIMITY_02"
-        policy_hits.append(policy_key)
-        reasons.append(
-            f"{prox_label.capitalize()} nearby: {prox_dist:.2f}m < slow radius {HUMAN_SLOW_RADIUS_M:.1f}m. Reduce speed."
-        )
-        required_action = f"Reduce speed to <= {MAX_SPEED_NEAR_HUMAN:.2f} while {prox_label} is within {HUMAN_SLOW_RADIUS_M:.1f}m."
-        risk_score = max(risk_score, 0.80)
-        if policy_state == "SAFE":
-            policy_state = "SLOW"
+        # Slow radius: only trigger a policy hit if speed exceeds the safe limit.
+        # Use HUMAN_CLEARANCE_02 (SOFT fail) — robot CAN proceed at safe speed.
+        if max_speed > MAX_SPEED_NEAR_HUMAN:
+            policy_hits.append("HUMAN_CLEARANCE_02")
+            reasons.append(
+                f"{prox_label.capitalize()} nearby: {prox_dist:.2f}m < slow radius {HUMAN_SLOW_RADIUS_M:.1f}m. "
+                f"Speed {max_speed:.2f} exceeds safe limit {MAX_SPEED_NEAR_HUMAN:.2f}."
+            )
+            required_action = f"Reduce speed to <= {MAX_SPEED_NEAR_HUMAN:.2f} while {prox_label} is within {HUMAN_SLOW_RADIUS_M:.1f}m."
+            risk_score = max(risk_score, 0.65)
+            if policy_state == "SAFE":
+                policy_state = "SLOW"
 
     # --- UNCERTAINTY_04 ---
     if intent == "MOVE_TO" and human_detected and human_conf < MIN_HUMAN_CONF:
@@ -155,7 +158,7 @@ def evaluate_policies(telemetry: Dict[str, Any], proposal: ActionProposal) -> Go
     # --- HUMAN_CLEARANCE_02 (confidence-based, legacy) ---
     if intent == "MOVE_TO" and human_detected and human_conf >= MIN_HUMAN_CONF:
         if max_speed > MAX_SPEED_NEAR_HUMAN:
-            if "HUMAN_PROXIMITY_02" not in policy_hits:
+            if "HUMAN_PROXIMITY_02" not in policy_hits and "HUMAN_CLEARANCE_02" not in policy_hits:
                 policy_hits.append("HUMAN_CLEARANCE_02")
             reasons.append(f"Human nearby (conf={human_conf:.2f}); max_speed {max_speed:.2f} too high.")
             required_action = f"Reduce max_speed to <= {MAX_SPEED_NEAR_HUMAN:.2f} near humans."

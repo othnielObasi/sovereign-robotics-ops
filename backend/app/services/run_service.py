@@ -401,12 +401,17 @@ class RunService:
                         except (asyncio.TimeoutError, Exception) as prop_err:
                             logger.warning("Run %s: agent proposal failed/timed out: %s — using deterministic fallback", run_id, prop_err)
                             proposal = self.agent.simple.propose(telemetry, goal, last_governance)
-                    # Clamp planned max_speed to zone limits to avoid trivial NEEDS_REVIEW
+                    # Clamp planned max_speed to zone limits and human proximity
                     if proposal.intent == "MOVE_TO":
                         zone = telemetry.get("zone", "aisle")
                         limit = float(ZONE_SPEED_LIMITS.get(zone, 0.5))
                         p = proposal.params or {}
-                        p["max_speed"] = min(float(p.get("max_speed", 0.5)), limit)
+                        clamped = min(float(p.get("max_speed", 0.5)), limit)
+                        # Also clamp near humans (slow-radius preemption)
+                        human_dist = float(telemetry.get("human_distance_m", 999.0))
+                        if human_dist < 3.0:
+                            clamped = min(clamped, 0.3)
+                        p["max_speed"] = clamped
                         proposal.params = p
 
                     proposal_payload = proposal.model_dump()
