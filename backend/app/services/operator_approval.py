@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from typing import Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone
 
 from app.db.session import SessionLocal
 from app.db.models import OperatorApproval
@@ -10,7 +10,7 @@ from app.db.models import OperatorApproval
 def approve(run_id: str, proposal_hash: str, approved_by: str | None = None, notes: str | None = None) -> None:
     db = SessionLocal()
     try:
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         oa = OperatorApproval(
             run_id=run_id,
             proposal_hash=proposal_hash,

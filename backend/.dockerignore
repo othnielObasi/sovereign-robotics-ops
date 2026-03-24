@@ -1,0 +1,12 @@
+.env
+.env.*
+*.key
+*.pem
+__pycache__
+*.pyc
+.git
+.pytest_cache
+.ruff_cache
+sro_backend.egg-info
+data/
+tests/

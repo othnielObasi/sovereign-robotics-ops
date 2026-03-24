@@ -5,7 +5,7 @@ Generates audit reports for regulatory compliance (ISO 42001, EU AI Act, etc.)
 
 import hashlib
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel
 
@@ -82,7 +82,7 @@ class ComplianceReportService:
     ) -> ComplianceReport:
         """Generate a compliance report from governance events."""
         
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         
         # Calculate metrics
         metrics = self._calculate_metrics(events)
@@ -156,7 +156,7 @@ class ComplianceReportService:
         for event in events:
             # Create entry data
             entry_data = {
-                "timestamp": event.get("timestamp", datetime.utcnow().isoformat()),
+                "timestamp": event.get("timestamp", datetime.now(timezone.utc).isoformat()),
                 "decision_id": event.get("id", "unknown"),
                 "action_type": event.get("action_type", "unknown"),
                 "approved": event.get("approved", False),

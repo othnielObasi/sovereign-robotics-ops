@@ -1,4 +1,8 @@
 
+networks:
+  frontend_net:
+  backend_net:
+
 services:
   frontend:
     build:
@@ -12,8 +16,22 @@ services:
       NEXT_PUBLIC_API_BASE: ${NEXT_PUBLIC_API_BASE}
       NODE_ENV: production
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     restart: always
+    networks:
+      - frontend_net
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 512M
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   backend:
     build:
       context: ./backend
@@ -24,7 +42,7 @@ services:
     environment:
       DATABASE_URL: "postgresql://sro:${POSTGRES_PASSWORD}@db:5432/sro"
       ENVIRONMENT: "production"
-      CORS_ORIGINS: "https://sovereignroboticsops.nov-tia.com,http://sovereignroboticsops.nov-tia.com,http://localhost:3000"
+      CORS_ORIGINS: "https://sovereignroboticsops.nov-tia.com"
       GEMINI_API_KEY: "${GEMINI_API_KEY}"
       GEMINI_PROJECT_ID: "${GEMINI_PROJECT_ID}"
       GEMINI_ENABLED: "true"
@@ -32,10 +50,34 @@ services:
       SIM_TOKEN: "${SIM_TOKEN}"
       SIM_BASE_URL: "http://sim:8090"
     depends_on:
-      - db
-      - sim
+      db:
+        condition: service_healthy
+      sim:
+        condition: service_started
+    restart: always
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    networks:
+      - frontend_net
+      - backend_net
     volumes:
       - backend_data:/app/data
+    stop_grace_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1G
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
   db:
     image: postgres:16
     ports:
@@ -44,8 +86,29 @@ services:
       POSTGRES_USER: sro
       POSTGRES_PASSWORD: "${POSTGRES_PASSWORD}"
       POSTGRES_DB: sro
+    restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sro -d sro"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 15s
+    networks:
+      - backend_net
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    stop_grace_period: 60s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1G
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
   sim:
     build:
       context: ./sim/mock_sim
@@ -55,6 +118,18 @@ services:
     command: >
       uvicorn server:app --host 0.0.0.0 --port 8090
     restart: always
+    networks:
+      - backend_net
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 256M
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 volumes:
   postgres_data:
