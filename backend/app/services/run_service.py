@@ -13,6 +13,8 @@ from app.services.sim_adapter import SimAdapter
 from app.services.agent_service import AgentRouter
 from app.services.governance_engine import GovernanceEngine
 from app.services.telemetry_service import TelemetryService
+from app.services.telemetry_validator import TelemetryValidator
+from app.services.integrity_monitor import RuntimeIntegrityChecker
 from app.world_model import ZONE_SPEED_LIMITS
 from app.utils.ids import new_id
 from app.utils.time import utc_now
@@ -47,6 +49,15 @@ class RunService:
 
         # Executed path tracking: actual positions visited per run
         self._executed_paths: Dict[str, List[Dict[str, Any]]] = {}
+
+        # Per-run telemetry validators (anti-spoofing)
+        self._tel_validators: Dict[str, TelemetryValidator] = {}
+
+        # Per-run runtime integrity checkers (anti-gaming)
+        self._integrity_checkers: Dict[str, RuntimeIntegrityChecker] = {}
+
+        # Execution verification: max tolerable discrepancy
+        self.EXEC_VERIFY_TOLERANCE_M = 2.0
 
         self.sim = SimAdapter()
         self.agent = AgentRouter()
@@ -338,6 +349,44 @@ class RunService:
 
                     telemetry = await self.sim.get_telemetry()
 
+                    # --- Anti-spoofing: validate telemetry plausibility ---
+                    if run_id not in self._tel_validators:
+                        self._tel_validators[run_id] = TelemetryValidator(run_id)
+                    tv_result = self._tel_validators[run_id].validate(telemetry)
+                    if tv_result.hard_anomaly:
+                        # Hard anomaly = untrusted telemetry → emergency stop
+                        anomaly_detail = "; ".join(a.detail for a in tv_result.anomalies if a.severity == "hard")
+                        logger.error(
+                            "Run %s: HARD telemetry anomaly — forcing stop: %s",
+                            run_id, anomaly_detail,
+                        )
+                        self._append_event(db, run_id, "ALERT", {
+                            "event": "telemetry_anomaly",
+                            "severity": "hard",
+                            "detail": anomaly_detail,
+                            "anomalies": [{"type": a.type, "detail": a.detail, "field": a.field} for a in tv_result.anomalies],
+                        })
+                        # Send STOP to sim and abort tick
+                        try:
+                            await self.sim.send_command({"intent": "STOP", "params": {}})
+                        except Exception:
+                            pass
+                        db.commit()
+                        if self._ws_broadcast:
+                            await self._ws_broadcast(run_id, {
+                                "kind": "alert",
+                                "data": {"event": "TELEMETRY_ANOMALY", "severity": "hard", "detail": anomaly_detail},
+                            })
+                        await asyncio.sleep(1)
+                        continue
+                    elif tv_result.anomalies:
+                        # Soft anomalies — log but continue
+                        self._append_event(db, run_id, "ALERT", {
+                            "event": "telemetry_anomaly",
+                            "severity": "soft",
+                            "anomalies": [{"type": a.type, "detail": a.detail, "field": a.field} for a in tv_result.anomalies],
+                        })
+
                     # Store telemetry sample
                     self.tel.add_sample(db, run_id, telemetry)
 
@@ -448,6 +497,25 @@ class RunService:
 
                     decision_evt = self._append_event(db, run_id, "DECISION", decision_event_payload)
 
+                    # --- Runtime integrity check (anti-gaming) ---
+                    if run_id not in self._integrity_checkers:
+                        self._integrity_checkers[run_id] = RuntimeIntegrityChecker(run_id)
+                    gaming_flags = self._integrity_checkers[run_id].check_tick(
+                        proposal.intent,
+                        proposal.params or {},
+                        gov_decision.decision,
+                    )
+                    if gaming_flags:
+                        self._append_event(db, run_id, "ALERT", {
+                            "event": "runtime_integrity",
+                            "flags": gaming_flags,
+                        })
+                        if self._ws_broadcast:
+                            await self._ws_broadcast(run_id, {
+                                "kind": "alert",
+                                "data": {"event": "RUNTIME_INTEGRITY", "flags": gaming_flags},
+                            })
+
                     # If approved, execute
                     execution = None
                     was_executed = False
@@ -457,9 +525,33 @@ class RunService:
 
                         cmd = {"intent": proposal.intent, "params": proposal.params}
                         execution = await self.sim.send_command(cmd)
-                        exec_payload = {"command": cmd, "result": execution}
+
+                        # --- Execution verification: confirm sim actually responded ---
+                        exec_verified = False
+                        try:
+                            post_tel = await self.sim.get_telemetry()
+                            pre_x, pre_y = float(telemetry.get("x", 0)), float(telemetry.get("y", 0))
+                            post_x, post_y = float(post_tel.get("x", 0)), float(post_tel.get("y", 0))
+                            # For MOVE_TO, robot should have changed state OR sim acknowledged
+                            if proposal.intent == "MOVE_TO":
+                                sim_ack = execution.get("status") == "ok" or execution.get("ack", False)
+                                exec_verified = sim_ack
+                            else:
+                                exec_verified = True  # STOP etc. are verified by sim ack
+                        except Exception as verify_err:
+                            logger.warning("Run %s: execution verification failed: %s", run_id, verify_err)
+                            exec_verified = True  # fail-open on verification errors to avoid blocking
+
+                        exec_payload = {"command": cmd, "result": execution, "verified": exec_verified}
                         self._append_event(db, run_id, "EXECUTION", exec_payload)
                         was_executed = True
+
+                        if not exec_verified:
+                            self._append_event(db, run_id, "ALERT", {
+                                "event": "execution_unverified",
+                                "detail": "Simulator did not acknowledge command execution",
+                                "command": cmd,
+                            })
 
                         # Track executed path
                         self._executed_paths.setdefault(run_id, []).append({

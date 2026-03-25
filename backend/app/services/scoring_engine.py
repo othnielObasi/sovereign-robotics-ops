@@ -126,11 +126,12 @@ def compute_scorecard(db: Session, run_id: str) -> Dict[str, Any]:
 
     # --- COMPLIANCE SCORE ---
     # Approval rate with a penalty for escalations
+    # Anti-gaming: require minimum decisions to earn compliance credit
     if total_decisions > 0:
         compliance = approved / total_decisions
         compliance -= escalated * 0.02
     else:
-        compliance = 1.0  # no decisions = trivially compliant
+        compliance = 0.0  # no decisions = NOT trivially compliant (anti-gaming)
     compliance = _clamp(compliance)
 
     # --- MISSION SUCCESS SCORE ---
@@ -164,6 +165,12 @@ def compute_scorecard(db: Session, run_id: str) -> Dict[str, Any]:
             efficiency = 1.0 if straight_line < 0.5 else 0.5
     else:
         efficiency = 0.0
+
+    # Anti-gaming: penalize inactivity (few samples = robot barely moved)
+    MIN_SAMPLES_FOR_FULL_EFFICIENCY = 5
+    if len(positions) < MIN_SAMPLES_FOR_FULL_EFFICIENCY and total_decisions > 0:
+        inactivity_ratio = len(positions) / MIN_SAMPLES_FOR_FULL_EFFICIENCY
+        efficiency *= inactivity_ratio
 
     # Penalize replans and stagnation
     efficiency -= replan_count * 0.05

@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.schemas.governance import ActionProposal, GovernanceDecision
 from app.policies.rules_python import evaluate_policies
-from app.db.models import GovernanceDecisionRecord
+from app.db.models import GovernanceDecisionRecord, CircuitBreakerState
 from app.utils.time import utc_now
 from app.policies.versioning import policy_version_hash
 
@@ -29,7 +29,37 @@ class GovernanceEngine:
     """
 
     def __init__(self):
-        self._consecutive_denials: Dict[str, int] = {}
+        self._consecutive_denials: Dict[str, int] = {}  # in-memory cache
+
+    def _get_circuit_breaker(self, db: Session, run_id: str) -> int:
+        """Get consecutive denial count — DB-backed with in-memory cache."""
+        if run_id in self._consecutive_denials:
+            return self._consecutive_denials[run_id]
+        row = db.query(CircuitBreakerState).filter(
+            CircuitBreakerState.run_id == run_id
+        ).first()
+        count = row.consecutive_denials if row else 0
+        self._consecutive_denials[run_id] = count
+        return count
+
+    def _set_circuit_breaker(self, db: Session, run_id: str, count: int) -> None:
+        """Persist consecutive denial count to DB and cache."""
+        self._consecutive_denials[run_id] = count
+        row = db.query(CircuitBreakerState).filter(
+            CircuitBreakerState.run_id == run_id
+        ).first()
+        if row:
+            row.consecutive_denials = count
+            row.escalated = "true" if count >= CONSECUTIVE_DENIAL_ESCALATION else row.escalated
+            row.last_updated = utc_now()
+        else:
+            row = CircuitBreakerState(
+                run_id=run_id,
+                consecutive_denials=count,
+                escalated="false",
+                last_updated=utc_now(),
+            )
+            db.add(row)
 
     def evaluate(self, telemetry: Dict[str, Any], proposal: ActionProposal) -> GovernanceDecision:
         """Evaluate a proposal against policies. Stateless — does not persist."""
@@ -47,24 +77,26 @@ class GovernanceEngine:
         """Evaluate a proposal, persist the decision, and handle escalation logic."""
         decision = evaluate_policies(telemetry, proposal)
 
-        # Circuit-breaker: track consecutive denials
+        # Circuit-breaker: track consecutive denials (persistent)
         escalated = False
         if decision.decision in ("DENIED", "NEEDS_REVIEW"):
-            self._consecutive_denials[run_id] = self._consecutive_denials.get(run_id, 0) + 1
-            if self._consecutive_denials[run_id] >= CONSECUTIVE_DENIAL_ESCALATION:
+            prev_count = self._get_circuit_breaker(db, run_id)
+            new_count = prev_count + 1
+            self._set_circuit_breaker(db, run_id, new_count)
+            if new_count >= CONSECUTIVE_DENIAL_ESCALATION:
                 escalated = True
                 if "CIRCUIT_BREAKER" not in decision.reasons:
                     decision.reasons.append(
-                        f"Circuit breaker: {self._consecutive_denials[run_id]} consecutive denials — operator escalation required"
+                        f"Circuit breaker: {new_count} consecutive denials — operator escalation required"
                     )
                 if decision.decision == "DENIED":
                     decision.decision = "NEEDS_REVIEW"
                 logger.warning(
                     "Run %s: circuit breaker triggered after %d consecutive denials",
-                    run_id, self._consecutive_denials[run_id],
+                    run_id, new_count,
                 )
         else:
-            self._consecutive_denials[run_id] = 0
+            self._set_circuit_breaker(db, run_id, 0)
 
         # Build compact telemetry summary for storage
         tel_summary = {

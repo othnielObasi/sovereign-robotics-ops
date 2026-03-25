@@ -5,8 +5,11 @@ Detects attempts (intentional or emergent) to game the scoring system:
 - Compliance score inflated by avoiding actions entirely
 - Suspiciously uniform scores (possible overfitting)
 - Dimension score divergence beyond expected correlation
+- Runtime anomaly detection during tick loop (not just post-hoc)
 
-This runs as a post-hoc analysis on completed runs.
+This runs both:
+- Post-hoc: on completed runs (check_run_integrity, check_cross_run_integrity)
+- Runtime: during tick loop via RuntimeIntegrityChecker
 """
 
 from __future__ import annotations
@@ -197,3 +200,102 @@ def check_cross_run_integrity(db: Session, limit: int = 10) -> Dict[str, Any]:
         "per_run_summary": per_run,
         "systemic_issues": len(cross_flags) > 0,
     }
+
+
+class RuntimeIntegrityChecker:
+    """Lightweight runtime integrity checks that run during the tick loop.
+
+    Unlike check_run_integrity() which is post-hoc, this detects gaming
+    patterns AS THEY HAPPEN and can trigger alerts/stops.
+
+    Create one per run. Call check_tick() every governance cycle.
+    """
+
+    # Thresholds
+    MAX_ALL_DENY_RATIO = 0.95         # Almost all denied = possible avoidance strategy
+    MIN_TICKS_FOR_RATIO_CHECK = 10
+    MAX_SAME_PROPOSAL_STREAK = 15     # Exact same proposal repeated = possible looping exploit
+    DECISION_DIVERSITY_MIN = 0.1      # < 10% diversity = suspicious uniformity
+
+    def __init__(self, run_id: str):
+        self.run_id = run_id
+        self.total_ticks = 0
+        self.approved_count = 0
+        self.denied_count = 0
+        self._last_proposal_hash: str = ""
+        self._same_proposal_streak: int = 0
+        self._proposal_set: set = set()
+        self._flags: List[Dict[str, Any]] = []
+
+    def check_tick(
+        self,
+        proposal_intent: str,
+        proposal_params: Dict[str, Any],
+        decision: str,
+    ) -> List[Dict[str, Any]]:
+        """Check a single governance tick for gaming patterns.
+
+        Returns a list of flags (may be empty). Any flag means
+        the caller should log an ALERT event.
+        """
+        self.total_ticks += 1
+        flags: List[Dict[str, Any]] = []
+
+        if decision == "APPROVED":
+            self.approved_count += 1
+        else:
+            self.denied_count += 1
+
+        # Track proposal diversity
+        proposal_key = f"{proposal_intent}:{sorted(proposal_params.items()) if proposal_params else ''}"
+        self._proposal_set.add(proposal_key)
+
+        # Check 1: Same proposal repeated many times (exploit loop)
+        if proposal_key == self._last_proposal_hash:
+            self._same_proposal_streak += 1
+            if self._same_proposal_streak >= self.MAX_SAME_PROPOSAL_STREAK:
+                flags.append({
+                    "type": "PROPOSAL_LOOP",
+                    "severity": "medium",
+                    "detail": f"Same proposal repeated {self._same_proposal_streak} times — possible exploit loop",
+                })
+        else:
+            self._same_proposal_streak = 0
+        self._last_proposal_hash = proposal_key
+
+        # Check 2: Excessive denial ratio (avoidance gaming)
+        if self.total_ticks >= self.MIN_TICKS_FOR_RATIO_CHECK:
+            deny_ratio = self.denied_count / self.total_ticks
+            if deny_ratio >= self.MAX_ALL_DENY_RATIO:
+                flags.append({
+                    "type": "EXCESSIVE_DENIALS",
+                    "severity": "medium",
+                    "detail": f"{self.denied_count}/{self.total_ticks} decisions denied ({deny_ratio:.0%}) — possible avoidance strategy",
+                })
+
+        # Check 3: Low proposal diversity (repetitive behavior)
+        if self.total_ticks >= 20:
+            diversity = len(self._proposal_set) / self.total_ticks
+            if diversity < self.DECISION_DIVERSITY_MIN:
+                flags.append({
+                    "type": "LOW_DIVERSITY",
+                    "severity": "low",
+                    "detail": f"Only {len(self._proposal_set)} unique proposals in {self.total_ticks} ticks — low diversity",
+                })
+
+        if flags:
+            self._flags.extend(flags)
+
+        return flags
+
+    def get_summary(self) -> Dict[str, Any]:
+        """Return summary of runtime integrity checks."""
+        return {
+            "run_id": self.run_id,
+            "total_ticks": self.total_ticks,
+            "approved": self.approved_count,
+            "denied": self.denied_count,
+            "unique_proposals": len(self._proposal_set),
+            "flags": self._flags,
+            "flagged": len(self._flags) > 0,
+        }

@@ -146,6 +146,31 @@ def aggregate_cross_run_lessons(db: Session, limit: int = 20) -> Dict[str, Any]:
             lessons.append(lesson)
             mem.store_learning(db, f"cross_run_{len(runs)}", lesson)
 
+    # Anti-poisoning: detect slow baseline drift ("boiling frog" attack)
+    # If ALL dimensions are slowly declining, someone may be poisoning the learning.
+    declining_count = sum(1 for d in dimensions if trends.get(d) == "degrading")
+    if declining_count >= 3:
+        lesson = (
+            f"WARNING: {declining_count}/{len(dimensions)} dimensions declining simultaneously. "
+            f"Possible baseline poisoning — recommend freezing adaptive tuning and manual audit."
+        )
+        lessons.append(lesson)
+        mem.store_learning(db, f"cross_run_{len(runs)}", lesson)
+        logger.warning("Cross-run poisoning alert: %d dimensions declining for %d runs", declining_count, len(runs))
+
+    # Anti-poisoning: flag if recent composite is significantly below historical
+    composites = [sc.get("scores", {}).get("composite", 0) for sc in scorecards]
+    if len(composites) >= 6:
+        recent_comp = sum(composites[:3]) / 3
+        older_comp = sum(composites[3:6]) / 3
+        if recent_comp < older_comp - 0.15:
+            lesson = (
+                f"Composite score dropped significantly: recent {recent_comp:.3f} vs historical {older_comp:.3f}. "
+                f"Review recent parameter changes for possible gaming-induced drift."
+            )
+            lessons.append(lesson)
+            mem.store_learning(db, f"cross_run_{len(runs)}", lesson)
+
     # Store successful strategy if safety is consistently high
     if averages.get("safety", 0) > 0.85 and stdevs.get("safety", 1) < 0.1:
         strategy = {

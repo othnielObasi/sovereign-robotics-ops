@@ -147,3 +147,14 @@ class PolicyVersion(Base):
     parameters_json = Column(Text, nullable=False)
     created_at = Column(DateTime(timezone=True), nullable=False)
     description = Column(Text, nullable=True)
+
+
+class CircuitBreakerState(Base):
+    """Persistent circuit breaker state — survives process restarts."""
+    __tablename__ = "circuit_breaker_state"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    run_id = Column(String, index=True, nullable=False, unique=True)
+    consecutive_denials = Column(Integer, nullable=False, default=0)
+    escalated = Column(String, nullable=False, default="false")
+    last_updated = Column(DateTime(timezone=True), nullable=False)
