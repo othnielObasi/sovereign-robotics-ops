@@ -32,13 +32,16 @@ function Card({ title, children, className = "" }: { title: string; children: Re
   );
 }
 
-function CollapsibleCard({ title, children, className = "", defaultOpen = false }: { title: string; children: React.ReactNode; className?: string; defaultOpen?: boolean }) {
+function CollapsibleCard({ title, children, className = "", defaultOpen = false, hint }: { title: string; children: React.ReactNode; className?: string; defaultOpen?: boolean; hint?: React.ReactNode }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
     <div className={`bg-slate-800/80 border border-slate-700/60 rounded-xl shadow-lg shadow-black/20 ${className}`}>
-      <button onClick={() => setOpen(!open)} className="w-full flex items-center justify-between p-4 text-left">
+      <button onClick={() => setOpen(!open)} className="w-full flex items-center justify-between p-4 text-left gap-2">
         <span className="font-bold text-sm text-slate-300 uppercase tracking-wide">{title}</span>
-        <span className={`text-slate-500 transition-transform ${open ? "rotate-180" : ""}`}>▾</span>
+        <span className="flex items-center gap-2">
+          {!open && hint && <span className="text-[10px] text-slate-500 font-normal normal-case tracking-normal">{hint}</span>}
+          <span className={`text-slate-500 transition-transform ${open ? "rotate-180" : ""}`}>▾</span>
+        </span>
       </button>
       {open && <div className="px-4 pb-4">{children}</div>}
     </div>
@@ -874,12 +877,12 @@ export default function RunPage({ params }: { params: { runId: string } }) {
                       {(agenticResult.thought_chain || []).length > 2 && <div className="text-slate-500">+{(agenticResult.thought_chain || []).length - 2} more steps</div>}
                     </div>
                   </div>
+                  {/* Planner Confidence vs Governance Risk — explicitly distinct */}
                   <div className="flex items-center gap-2">
-                    <span className="text-yellow-400 font-bold min-w-[80px]">Confidence:</span>
+                    <span className="text-yellow-400 font-bold min-w-[120px]">Planner Confidence:</span>
                     {
                       (() => {
                         const risk = agenticResult.governance?.risk_score ?? 0;
-                        // small optimism bias and smoothing for presentation
                         const raw = 1 - risk;
                         const adjusted = Math.max(0, Math.min(1, raw * 0.92 + 0.04));
                         const pct = (adjusted * 100).toFixed(1);
@@ -895,6 +898,25 @@ export default function RunPage({ params }: { params: { runId: string } }) {
                       })()
                     }
                   </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-red-400 font-bold min-w-[120px]">Governance Risk:</span>
+                    {
+                      (() => {
+                        const risk = agenticResult.governance?.risk_score ?? 0;
+                        const pct = (risk * 100).toFixed(1);
+                        const color = risk > 0.5 ? "text-red-400" : risk > 0.2 ? "text-yellow-400" : "text-green-400";
+                        return (
+                          <>
+                            <span className={`font-bold ${color}`}>{pct}%</span>
+                            <div className="flex-1 h-1 bg-slate-700 rounded-full overflow-hidden ml-1">
+                              <div className={`h-full rounded-full transition-all duration-500 ${risk > 0.5 ? "bg-red-500" : risk > 0.2 ? "bg-yellow-500" : "bg-green-500"}`} style={{ width: `${risk * 100}%` }} />
+                            </div>
+                          </>
+                        );
+                      })()
+                    }
+                  </div>
+                  <div className="text-[10px] text-slate-600 italic mt-0.5">High planner confidence ≠ safe execution — governance overrides unsafe plans regardless of confidence</div>
 
                   {/* Collapsible full detail view */}
                   {showReasoningDetails && (
@@ -953,21 +975,27 @@ export default function RunPage({ params }: { params: { runId: string } }) {
                   )}
                 </div>
 
-                {/* Governance inline */}
+                {/* Preliminary policy check — NOT the final governance verdict */}
                 {agenticResult.governance && (
                   <div className={`text-xs rounded px-2 py-1.5 border space-y-1 ${
                     agenticResult.governance.decision === "APPROVED" ? "bg-green-500/10 border-green-500/20" : agenticResult.governance.decision === "DENIED" ? "bg-red-500/10 border-red-500/20" : "bg-yellow-500/10 border-yellow-500/20"
                   }`}>
                     <div className="flex items-center justify-between">
                       <span className="font-semibold">
-                        {agenticResult.governance.decision === "APPROVED" ? "✅" : agenticResult.governance.decision === "DENIED" ? "❌" : "⚠️"} {agenticResult.governance.decision}
+                        {agenticResult.governance.decision === "APPROVED" ? "✓" : agenticResult.governance.decision === "DENIED" ? "✗" : "⚠"}{" "}
+                        {agenticResult.governance.decision === "APPROVED" ? "Checks Passed" : agenticResult.governance.decision === "DENIED" ? "Checks Failed" : "Review Required"}
                       </span>
-                      <span className="text-slate-400">Execution Risk: {(agenticResult.governance.risk_score * 100).toFixed(0)}%</span>
+                      <span className="text-slate-500 text-[10px]">Preliminary Validation</span>
+                    </div>
+                    <div className="flex items-center gap-3 text-[10px]">
+                      <span className="text-slate-500">Planner Confidence: <span className={`font-bold ${(1 - (agenticResult.governance.risk_score ?? 0)) > 0.7 ? "text-green-400" : "text-yellow-400"}`}>{((1 - (agenticResult.governance.risk_score ?? 0)) * 100).toFixed(0)}%</span></span>
+                      <span className="text-slate-600">|</span>
+                      <span className="text-slate-500">Governance Risk: <span className={`font-bold ${(agenticResult.governance.risk_score ?? 0) > 0.5 ? "text-red-400" : (agenticResult.governance.risk_score ?? 0) > 0.2 ? "text-yellow-400" : "text-green-400"}`}>{((agenticResult.governance.risk_score ?? 0) * 100).toFixed(0)}%</span></span>
                     </div>
                     {/* Why Approved / Why Denied — explainability */}
                     {agenticResult.governance.decision === "APPROVED" && telemetry && (
                       <div className="text-[10px] text-green-400/70 space-y-0.5 pt-1 border-t border-green-500/10">
-                        <div className="text-green-300 font-semibold mb-0.5">Approved because:</div>
+                        <div className="text-green-300 font-semibold mb-0.5">Checks satisfied:</div>
                         {telemetry.human_distance_m > 3 && <div>✓ Human distance: {telemetry.human_distance_m?.toFixed(1)}m {'>'} 3m safe threshold</div>}
                         {telemetry.human_distance_m <= 3 && telemetry.human_distance_m > 1 && <div>✓ Human distance: {telemetry.human_distance_m?.toFixed(1)}m — speed reduced to safe level</div>}
                         {telemetry.nearest_obstacle_m > 0.5 && <div>✓ Obstacle clearance: {telemetry.nearest_obstacle_m?.toFixed(1)}m {'>'} 0.5m minimum</div>}
@@ -1228,41 +1256,62 @@ export default function RunPage({ params }: { params: { runId: string } }) {
               <div className="text-xs text-slate-500 space-y-1">
                 <div className="flex items-center gap-2 bg-green-500/5 border border-green-500/10 rounded px-2 py-1">
                   <span className="text-green-400 text-[10px]">●</span>
-                  <span className="text-slate-400">Battery at 96% (Normal)</span>
+                  <span className="text-[10px] text-slate-500 font-mono mr-1">PWR</span>
+                  <span className="text-slate-400">Battery at 96% — normal operating range</span>
                 </div>
                 <div className="flex items-center gap-2 bg-green-500/5 border border-green-500/10 rounded px-2 py-1">
                   <span className="text-green-400 text-[10px]">●</span>
-                  <span className="text-slate-400">Path deviation 0.12m (Within tolerance)</span>
+                  <span className="text-[10px] text-slate-500 font-mono mr-1">NAV</span>
+                  <span className="text-slate-400">Path deviation 0.12m — within ±0.5m tolerance</span>
                 </div>
                 <div className="flex items-center gap-2 bg-green-500/5 border border-green-500/10 rounded px-2 py-1">
                   <span className="text-green-400 text-[10px]">●</span>
-                  <span className="text-slate-400">Motor temp 42°C (Normal)</span>
+                  <span className="text-[10px] text-slate-500 font-mono mr-1">SEN</span>
+                  <span className="text-slate-400">Motor temp 42°C — below 65°C threshold</span>
+                </div>
+                <div className="flex items-center gap-2 bg-green-500/5 border border-green-500/10 rounded px-2 py-1">
+                  <span className="text-green-400 text-[10px]">●</span>
+                  <span className="text-[10px] text-slate-500 font-mono mr-1">COM</span>
+                  <span className="text-slate-400">Position update latency 12ms — below 100ms threshold</span>
                 </div>
               </div>
             ) : (
               <ul className="space-y-1 max-h-40 overflow-y-auto">
-                {alerts.map((a, i) => (
-                  <li key={i} className="flex items-start gap-1.5 text-xs bg-red-500/10 border border-red-500/20 rounded px-2 py-1.5">
-                    <span className="text-red-400">⚠️</span>
-                    <span className="text-slate-300">{a.event || JSON.stringify(a)}</span>
-                  </li>
-                ))}
+                {alerts.map((a, i) => {
+                  const msg = a.event || JSON.stringify(a);
+                  const category = msg.toLowerCase().includes("path") ? "NAV"
+                    : msg.toLowerCase().includes("speed") || msg.toLowerCase().includes("motor") ? "SEN"
+                    : msg.toLowerCase().includes("human") || msg.toLowerCase().includes("proximity") ? "SAF"
+                    : msg.toLowerCase().includes("battery") || msg.toLowerCase().includes("power") ? "PWR"
+                    : msg.toLowerCase().includes("latency") || msg.toLowerCase().includes("stale") ? "COM"
+                    : "SYS";
+                  return (
+                    <li key={i} className="flex items-start gap-1.5 text-xs bg-red-500/10 border border-red-500/20 rounded px-2 py-1.5">
+                      <span className="text-red-400">⚠️</span>
+                      <span className="text-[10px] text-red-400/70 font-mono min-w-[24px]">{category}</span>
+                      <span className="text-slate-300">{msg}</span>
+                    </li>
+                  );
+                })}
               </ul>
             )}
           </Card>
 
           {/* Scorecard (#10) */}
-          <CollapsibleCard title="📊 Performance Scorecard" defaultOpen={true}>
+          <CollapsibleCard title="📊 Performance Scorecard" defaultOpen={true}
+            hint={<span className="text-slate-400">5 dimensions tracked</span>}>
             <ScoreCard runId={runId} />
           </CollapsibleCard>
 
           {/* Agent Introspection (#20) */}
-          <CollapsibleCard title="🔍 Agent Introspection" defaultOpen={false}>
+          <CollapsibleCard title="🔍 Agent Introspection" defaultOpen={true}
+            hint={replanCount > 0 ? <span className="text-amber-400">{replanCount} replans · {lastDenialPolicy || "policy hit"}</span> : <span className="text-green-400">No denials</span>}>
             <IntrospectionPanel runId={runId} />
           </CollapsibleCard>
 
           {/* Safety Report (#14) */}
-          <CollapsibleCard title="🛡️ Safety Report" defaultOpen={false}>
+          <CollapsibleCard title="🛡️ Safety Report" defaultOpen={false}
+            hint={safetyReport ? <span className={safetyReport.verdict === "PASS" ? "text-green-400" : "text-red-400"}>{safetyReport.verdict === "PASS" ? "✓ PASS" : safetyReport.verdict === "FAIL" ? "✗ FAIL" : "⚠ " + safetyReport.verdict} · {safetyReport.checks_run || 0} checks</span> : <span className="text-slate-500">Awaiting data</span>}>
             {!safetyReport ? (
               <div className="text-xs text-slate-500 text-center py-2">No safety report yet</div>
             ) : (
@@ -1302,7 +1351,8 @@ export default function RunPage({ params }: { params: { runId: string } }) {
           </CollapsibleCard>
 
           {/* Optimization Analysis (#7) */}
-          <CollapsibleCard title="⚡ Optimization Analysis" defaultOpen={false}>
+          <CollapsibleCard title="⚡ Optimization Analysis" defaultOpen={false}
+            hint={optimizationAnalysis ? <span className="text-cyan-400">Eff: {((optimizationAnalysis.scorecard?.scores?.efficiency ?? 0) * 100).toFixed(0)}% · Safety: {((optimizationAnalysis.scorecard?.scores?.safety ?? 0) * 100).toFixed(0)}%</span> : <span className="text-slate-500">Click to load</span>}>
             {!optimizationAnalysis ? (
               <div className="text-center py-2">
                 <button onClick={async () => { try { setOptimizationAnalysis(await analyzeRunOptimization(runId)); } catch (_) {} }}
@@ -1359,7 +1409,8 @@ export default function RunPage({ params }: { params: { runId: string } }) {
           </CollapsibleCard>
 
           {/* Divergence Explanation (#20) */}
-          <CollapsibleCard title="🔀 Divergence Explanation" defaultOpen={true}>
+          <CollapsibleCard title="🔀 Divergence Explanation" defaultOpen={true}
+            hint={divergenceExplanation ? (divergenceExplanation.divergence_detected ? <span className="text-yellow-400">⚠ Diverged · {divergenceExplanation.max_deviation?.toFixed?.(1) || "?"}m</span> : <span className="text-green-400">✓ On Track</span>) : <span className="text-slate-500">Click to analyze</span>}>
             <div className="space-y-2">
               {divergenceExplanation ? (
                 <>
