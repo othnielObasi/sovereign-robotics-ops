@@ -596,7 +596,35 @@ class RunService:
                         self._wp_denial_counts[run_id] = self._wp_denial_counts.get(run_id, 0) + 1
                         denial_count = self._wp_denial_counts[run_id]
 
-                        if denial_count >= self.REPLAN_DENIAL_THRESHOLD and plan_wps:
+                        # NEEDS_REVIEW with escalation: pause run for operator decision
+                        if gov_decision.decision == "NEEDS_REVIEW":
+                            logger.warning("Run %s: NEEDS_REVIEW — pausing for operator", run_id)
+                            run.status = "paused"
+                            if mission and mission.status == "executing":
+                                mission.status = "paused"
+                            self._append_event(db, run_id, "INTERVENTION", {
+                                "type": "AUTO_PAUSE",
+                                "reason": "Governance requires operator review",
+                                "policy_hits": gov_decision.policy_hits,
+                                "denial_count": denial_count,
+                            })
+                            db.commit()
+                            if self._ws_broadcast:
+                                await self._ws_broadcast(run_id, {
+                                    "kind": "status",
+                                    "data": {
+                                        "status": "paused",
+                                        "reason": "needs_operator_review",
+                                        "policy_hits": gov_decision.policy_hits,
+                                        "denial_reasons": gov_decision.reasons,
+                                    },
+                                })
+                            # Wait for operator to resume via override endpoint
+                            if run_id not in self._pause_flags:
+                                self._pause_flags[run_id] = asyncio.Event()
+                            self._pause_flags[run_id].set()
+
+                        elif denial_count >= self.REPLAN_DENIAL_THRESHOLD and plan_wps:
                             # Trigger replanning: discard blocked waypoint and request new plan
                             blocked_wp = plan_wps[0] if plan_wps else {}
                             logger.warning(

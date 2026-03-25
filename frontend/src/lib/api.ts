@@ -104,6 +104,16 @@ export async function stopRun(runId: string) {
   return r.json();
 }
 
+export async function operatorOverride(runId: string, action: string, reason: string) {
+  const r = await fetchWithRetry(`${API_BASE}/operator/override`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ run_id: runId, action, reason }),
+  });
+  if (!r.ok) throw new Error(await parseErrorResponse(r, "Failed to send operator override"));
+  return r.json();
+}
+
 export async function listPolicies() {
   const r = await fetchWithRetry(`${API_BASE}/policies`, { cache: "no-store" });
   if (!r.ok) throw new Error(await parseErrorResponse(r, "Failed to list policies"));

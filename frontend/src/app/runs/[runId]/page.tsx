@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { getRun, listEvents, stopRun, getWorld, getTelemetry, getPathPreview, triggerScenario, generateLLMPlan, executeLLMPlan, analyzeScene, analyzeTelemetry, detectFailures, agenticPropose, getMission, getRiskHeatmap, getExecutedPath, getRunSafetyReport, getDivergenceExplanation, analyzeRunOptimization } from "@/lib/api";
+import { getRun, listEvents, stopRun, operatorOverride, getWorld, getTelemetry, getPathPreview, triggerScenario, generateLLMPlan, executeLLMPlan, analyzeScene, analyzeTelemetry, detectFailures, agenticPropose, getMission, getRiskHeatmap, getExecutedPath, getRunSafetyReport, getDivergenceExplanation, analyzeRunOptimization } from "@/lib/api";
 import { Map2D } from "@/components/Map2D";
 import { ScoreCard } from "@/components/ScoreCard";
 import { IntrospectionPanel } from "@/components/IntrospectionPanel";
@@ -517,6 +517,16 @@ export default function RunPage({ params }: { params: { runId: string } }) {
           {currentStatus !== "stopped" && (
             <button onClick={onStop} className="bg-red-500/80 hover:bg-red-600 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition">
               Stop
+            </button>
+          )}
+          {currentStatus === "paused" && (
+            <button onClick={async () => {
+              try {
+                await operatorOverride(runId, "resume", "Operator approved after governance review");
+                setStatus("running");
+              } catch (e: any) { console.error("Override failed:", e); }
+            }} className="bg-amber-500/80 hover:bg-amber-600 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition animate-pulse">
+              ▶ Override &amp; Resume
             </button>
           )}
           {/* Live diagnostics */}

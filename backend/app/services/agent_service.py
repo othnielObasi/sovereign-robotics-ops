@@ -31,18 +31,31 @@ class SimpleAgent:
 
         # Default higher speed
         speed = 0.8
+        rationale_parts = ["Navigate toward mission goal"]
 
-        # If governance previously denied/reviewed due to speed/human/obstacle, slow down
+        # Structured denial feedback: adapt behavior based on governance reasons
         if last_governance:
+            decision = last_governance.get("decision", "")
             hits = set(last_governance.get("policy_hits", []))
-            if {"SAFE_SPEED_01", "HUMAN_CLEARANCE_02", "HUMAN_PROXIMITY_02",
-                "OBSTACLE_CLEARANCE_03", "UNCERTAINTY_04"} & hits:
-                speed = 0.2  # Well below MAX_SPEED_NEAR_HUMAN (0.4)
+            reasons = last_governance.get("reasons", [])
+
+            if decision in ("DENIED", "NEEDS_REVIEW"):
+                if hits & {"SAFE_SPEED_01", "HUMAN_CLEARANCE_02", "HUMAN_PROXIMITY_02",
+                           "OBSTACLE_CLEARANCE_03", "UNCERTAINTY_04", "WORKER_PROXIMITY_06"}:
+                    speed = 0.2  # Well below MAX_SPEED_NEAR_HUMAN (0.4)
+                    rationale_parts.append(f"reduced speed due to: {', '.join(hits & {'SAFE_SPEED_01', 'HUMAN_CLEARANCE_02', 'HUMAN_PROXIMITY_02', 'OBSTACLE_CLEARANCE_03'})}")
+
+                if "GEOFENCE_01" in hits:
+                    # Clamp target to geofence bounds
+                    from app.world_model import GEOFENCE
+                    gx = max(GEOFENCE["min_x"] + 0.5, min(gx, GEOFENCE["max_x"] - 0.5))
+                    gy = max(GEOFENCE["min_y"] + 0.5, min(gy, GEOFENCE["max_y"] - 0.5))
+                    rationale_parts.append("clamped target to geofence after GEOFENCE_01 denial")
 
         return ActionProposal(
             intent="MOVE_TO",
             params={"x": gx, "y": gy, "max_speed": speed},
-            rationale="Navigate toward mission goal using a safe speed profile.",
+            rationale="; ".join(rationale_parts),
         )
 
 

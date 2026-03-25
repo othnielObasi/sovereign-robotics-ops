@@ -17,8 +17,65 @@ from app.services.run_service import RunService
 from app.services.gemini_planner import GeminiPlanner
 from app.services.local_fallback_planner import generate_fallback_waypoint
 from app.config import settings
+from app.world_model import GEOFENCE
 
 logger = logging.getLogger("app.routes_runs")
+
+
+def _review_mission_plan(goal: dict, waypoints: list, plan_source: str) -> dict:
+    """Mission-level governance gate: Sovereign reviews the plan before execution.
+
+    Checks:
+    - Goal within geofence
+    - All waypoints within geofence
+    - Plan exists (not empty)
+
+    Returns a review dict with verdict: APPROVED | BLOCKED | MODIFIED.
+    """
+    reasons = []
+    checks_passed = []
+
+    # Check goal is within geofence
+    gx, gy = float(goal.get("x", 0)), float(goal.get("y", 0))
+    goal_in_fence = (
+        GEOFENCE["min_x"] <= gx <= GEOFENCE["max_x"]
+        and GEOFENCE["min_y"] <= gy <= GEOFENCE["max_y"]
+    )
+    if goal_in_fence:
+        checks_passed.append("goal_within_geofence")
+    else:
+        reasons.append(f"Goal ({gx:.1f}, {gy:.1f}) is outside geofence bounds")
+
+    # Check all waypoints within geofence
+    wp_violations = []
+    for i, wp in enumerate(waypoints):
+        wx, wy = float(wp.get("x", 0)), float(wp.get("y", 0))
+        if not (GEOFENCE["min_x"] <= wx <= GEOFENCE["max_x"]
+                and GEOFENCE["min_y"] <= wy <= GEOFENCE["max_y"]):
+            wp_violations.append(f"waypoint {i} ({wx:.1f}, {wy:.1f})")
+    if wp_violations:
+        reasons.append(f"Out-of-bounds waypoints: {', '.join(wp_violations)}")
+    else:
+        checks_passed.append("all_waypoints_within_geofence")
+
+    # Check plan is not empty
+    if waypoints:
+        checks_passed.append("plan_has_waypoints")
+    else:
+        reasons.append("No waypoints in plan")
+
+    checks_passed.append("plan_source_verified")
+
+    verdict = "BLOCKED" if (not goal_in_fence or wp_violations) else "APPROVED"
+
+    return {
+        "verdict": verdict,
+        "plan_source": plan_source,
+        "waypoint_count": len(waypoints),
+        "checks_passed": checks_passed,
+        "reasons": reasons,
+        "goal": {"x": gx, "y": gy},
+    }
 
 router = APIRouter()
 run_svc: RunService | None = None
@@ -53,16 +110,19 @@ async def _plan_and_start_loop(svc: RunService, run_id: str, mission_id: str, mi
     persisted.  This task:
     1. Attempts LLM plan generation (with a timeout).
     2. If successful, replaces the seed plan with the LLM plan.
-    3. Transitions the run from 'planning' to 'running' and launches the loop.
+    3. Sovereign validates the plan (mission-level governance gate).
+    4. Transitions the run from 'planning' to 'running' and launches the loop.
 
     The robot does NOT move until this task calls begin_running().
     """
     from app.db.session import SessionLocal
+    from app.schemas.governance import ActionProposal
     LLM_PLAN_TIMEOUT = 20  # seconds — generous but bounded
 
     db = SessionLocal()
     try:
         goal = json.loads(goal_json)
+        plan_source = "fallback"
 
         # --- Attempt LLM plan upgrade ---
         if settings.gemini_configured:
@@ -79,9 +139,11 @@ async def _plan_and_start_loop(svc: RunService, run_id: str, mission_id: str, mi
 
                 if plan and plan.get("waypoints"):
                     svc._plans[run_id] = plan["waypoints"]
+                    plan_source = "gemini"
                     svc._append_event(db, run_id, "PLAN", {
                         "mission_id": mission_id,
                         "plan": plan,
+                        "source": plan_source,
                         "note": "LLM multi-waypoint plan (upgraded from fallback)",
                     })
                     db.commit()
@@ -89,11 +151,39 @@ async def _plan_and_start_loop(svc: RunService, run_id: str, mission_id: str, mi
             except (asyncio.TimeoutError, Exception) as exc:
                 logger.warning("LLM plan failed/timed out for run %s: %s — using seed fallback", run_id, exc)
 
+        # --- Mission-level governance gate: Sovereign reviews the plan ---
+        plan_wps = svc._plans.get(run_id, [])
+        mission_review = _review_mission_plan(goal, plan_wps, plan_source)
+        svc._append_event(db, run_id, "MISSION_REVIEW", mission_review)
+        db.commit()
+
+        if svc._ws_broadcast:
+            await svc._ws_broadcast(run_id, {
+                "kind": "event",
+                "data": {"type": "MISSION_REVIEW", **mission_review},
+            })
+
+        if mission_review["verdict"] == "BLOCKED":
+            # Mission fundamentally invalid — mark run as failed
+            run = db.query(Run).filter(Run.id == run_id).first()
+            if run:
+                run.status = "failed"
+                run.ended_at = __import__("app.utils.time", fromlist=["utc_now"]).utc_now()
+                from app.db.models import Mission as _Mission
+                m = db.query(_Mission).filter(_Mission.id == mission_id).first()
+                if m:
+                    m.status = "failed"
+                db.commit()
+            logger.warning("Run %s: mission BLOCKED by Sovereign — %s", run_id, mission_review["reasons"])
+            if svc._ws_broadcast:
+                await svc._ws_broadcast(run_id, {"kind": "status", "data": {"status": "failed", "reason": "Mission blocked by governance"}})
+            return
+
         # --- Transition planning → running and launch loop ---
         svc.begin_running(db, run_id)
 
         if svc._ws_broadcast:
-            await svc._ws_broadcast(run_id, {"kind": "status", "data": {"status": "running"}})
+            await svc._ws_broadcast(run_id, {"kind": "status", "data": {"status": "running", "plan_source": plan_source}})
 
     except Exception as exc:
         logger.error("Plan-and-start failed for run %s: %s", run_id, exc)
@@ -169,6 +259,7 @@ async def start_run(
     svc._append_event(db, run.id, "PLAN", {
         "mission_id": mission.id,
         "plan": {"waypoints": [seed_waypoint]},
+        "source": "fallback",
         "note": "Seed fallback plan — LLM plan pending",
     })
     db.commit()

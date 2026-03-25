@@ -2,6 +2,11 @@ frontend/node_modules/
 node_modules/
 frontend/.next/
 
+# Environment secrets
+.env
+.env.local
+.env.production
+
 # JS artifacts
 package-lock.json
 npm-debug.log*
