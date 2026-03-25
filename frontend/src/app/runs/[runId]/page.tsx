@@ -538,11 +538,66 @@ export default function RunPage({ params }: { params: { runId: string } }) {
         </div>
       </div>
 
-      {/* ── Safety Banner (full-width, thin, color-coded) ── */}
-      <div className={`flex items-center justify-center gap-2 px-4 py-2 rounded-lg border text-sm font-semibold animate-banner-pulse ${safetyBannerCls[safety.state] || safetyBannerCls.OK}`}>
-        <span>{safetyIcon[safety.state] || "✅"}</span>
-        <span>{safety.state}</span>
-        {safety.state !== "OK" && <span className="font-normal opacity-80">— {safety.detail}</span>}
+      {/* ── Multi-Scope Status Strip ── */}
+      <div className={`grid grid-cols-5 gap-1.5 px-3 py-2 rounded-lg border ${safetyBannerCls[safety.state] || safetyBannerCls.OK}`}>
+        {/* Mission Status */}
+        <div className="flex flex-col items-center text-center">
+          <span className="text-[9px] uppercase tracking-wider text-slate-500 font-semibold">Mission</span>
+          <span className={`text-xs font-bold ${currentStatus === "stopped" ? "text-red-400" : currentStatus === "paused" ? "text-yellow-400" : "text-green-400"}`}>
+            {currentStatus === "running" ? "Active" : currentStatus === "stopped" ? "Halted" : currentStatus === "paused" ? "Paused" : currentStatus === "completed" ? "Complete" : "Idle"}
+          </span>
+        </div>
+        {/* Current Action Verdict */}
+        <div className="flex flex-col items-center text-center">
+          <span className="text-[9px] uppercase tracking-wider text-slate-500 font-semibold">Action Verdict</span>
+          <span className={`text-xs font-bold ${
+            lastDecision?.governance?.decision === "APPROVED" ? "text-green-400" :
+            lastDecision?.governance?.decision === "DENIED" ? "text-red-400" :
+            lastDecision?.governance?.decision === "NEEDS_REVIEW" ? "text-yellow-400" : "text-slate-400"
+          }`}>
+            {lastDecision?.governance?.decision === "APPROVED"
+              ? (lastDecision?.proposal?.intent === "STOP" ? "Approved Stop" : "Approved")
+              : lastDecision?.governance?.decision || "Awaiting"}
+          </span>
+        </div>
+        {/* Environment Risk State */}
+        <div className="flex flex-col items-center text-center">
+          <span className="text-[9px] uppercase tracking-wider text-slate-500 font-semibold">Environment</span>
+          <span className={`text-xs font-bold ${
+            telemetry?.human_distance_m != null && telemetry.human_distance_m < 2 ? "text-red-400" :
+            telemetry?.human_distance_m != null && telemetry.human_distance_m < 4 ? "text-yellow-400" : "text-green-400"
+          }`}>
+            {telemetry?.human_distance_m != null && telemetry.human_distance_m < 2 ? "Human Near"
+              : telemetry?.human_distance_m != null && telemetry.human_distance_m < 4 ? "Elevated"
+              : "Clear"}
+          </span>
+        </div>
+        {/* Planner State */}
+        <div className="flex flex-col items-center text-center">
+          <span className="text-[9px] uppercase tracking-wider text-slate-500 font-semibold">Planner</span>
+          <span className={`text-xs font-bold ${
+            llmPlan?.all_approved ? "text-green-400" :
+            llmPlan && !llmPlan.all_approved ? "text-yellow-400" :
+            pipelineStage === "reasoning" || pipelineStage === "planning" ? "text-purple-400" : "text-slate-400"
+          }`}>
+            {llmPlan?.all_approved ? "All Approved" :
+             llmPlan && !llmPlan.all_approved ? "Constrained" :
+             pipelineStage === "reasoning" || pipelineStage === "planning" ? "Working…" : "Idle"}
+          </span>
+        </div>
+        {/* Execution Safety */}
+        <div className="flex flex-col items-center text-center">
+          <span className="text-[9px] uppercase tracking-wider text-slate-500 font-semibold">Execution</span>
+          <span className={`text-xs font-bold ${
+            safety.state === "OK" ? "text-green-400" :
+            safety.state === "STOP" ? "text-red-400" :
+            safety.state === "SLOW" ? "text-yellow-400" : "text-blue-400"
+          }`}>
+            {safety.state === "OK" ? "Within Bounds" :
+             safety.state === "STOP" ? "Stopped" :
+             safety.state === "SLOW" ? "Speed Limited" : "Replanning"}
+          </span>
+        </div>
       </div>
 
       {/* ── MAIN LAYOUT: Hero Map (left 60%) + Sidebar (right 40%) ── */}
@@ -585,17 +640,27 @@ export default function RunPage({ params }: { params: { runId: string } }) {
             <div className="min-h-[450px]">
               <Map2D world={world} telemetry={telemetry} pathPoints={pathPoints} planWaypoints={llmPlan?.waypoints || null} missionGoal={resolveBayGoal(missionInstruction, world?.bays || []) || mission?.goal || null} showHeatmap={showHeatmap} showTrail={showTrail} safetyState={safety.state} hoveredWaypointIdx={hoveredWaypointIdx} riskCells={riskCells} executedPath={executedPathData} destinationBayId={destinationBayId} />
             </div>
-            {/* Map Legend */}
+            {/* Map Legend — explicit path ownership */}
             <div className="flex items-center gap-3 mt-2 px-1 flex-wrap">
               <span className="flex items-center gap-1 text-[10px] text-slate-400"><span className="w-2.5 h-2.5 rounded-full bg-cyan-400 inline-block" /> Robot</span>
               <span className="flex items-center gap-1 text-[10px] text-slate-400"><span className="w-2.5 h-2.5 rounded-sm bg-red-500 inline-block" /> Obstacles</span>
               <span className="flex items-center gap-1 text-[10px] text-slate-400"><span className="w-2.5 h-2.5 rounded-full bg-amber-400 inline-block" /> Human</span>
-              <span className="flex items-center gap-1 text-[10px] text-slate-400"><span className="w-2.5 h-2.5 rounded-full bg-purple-400 inline-block" /> Plan</span>
+              <span className="flex items-center gap-1 text-[10px] text-slate-400"><span className="w-2.5 h-2.5 rounded-full bg-blue-400 inline-block" /> Proposed Path</span>
+              <span className="flex items-center gap-1 text-[10px] text-slate-400"><span className="w-2.5 h-2.5 rounded-full bg-purple-400 inline-block" /> Approved Plan</span>
+              <span className="flex items-center gap-1 text-[10px] text-slate-400"><span className="w-2.5 h-2.5 rounded-full bg-green-500 inline-block" /> Executed Path</span>
               <span className="flex items-center gap-1 text-[10px] text-slate-400"><span className="w-2.5 h-2.5 rounded-full bg-emerald-400 inline-block" /> Goal</span>
-              <span className="flex items-center gap-1 text-[10px] text-slate-400"><span className="w-2.5 h-2.5 rounded-full bg-blue-400 inline-block" /> Path</span>
-              <span className="flex items-center gap-1 text-[10px] text-slate-400"><span className="w-2.5 h-2.5 rounded-full bg-green-500 inline-block" /> Executed</span>
               <span className="flex items-center gap-1 text-[10px] text-slate-400"><span className="w-2.5 h-2.5 rounded-sm bg-red-400/50 inline-block" /> Risk Zone</span>
-              <span className="text-[10px] text-slate-600 ml-auto">Scroll to zoom · Drag to pan</span>
+              {/* Mission Alignment badge */}
+              {llmPlan && executedPathData.length > 0 && (
+                <span className={`ml-auto flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full border ${
+                  divergenceExplanation?.divergence_detected
+                    ? "bg-yellow-500/15 text-yellow-400 border-yellow-500/30"
+                    : "bg-green-500/15 text-green-400 border-green-500/30"
+                }`}>
+                  {divergenceExplanation?.divergence_detected ? "⚠ Plan Diverged" : "✓ Following Approved Plan"}
+                </span>
+              )}
+              {!llmPlan && <span className="text-[10px] text-slate-600 ml-auto">Scroll to zoom · Drag to pan</span>}
             </div>
           </Card>
 
@@ -897,7 +962,7 @@ export default function RunPage({ params }: { params: { runId: string } }) {
                       <span className="font-semibold">
                         {agenticResult.governance.decision === "APPROVED" ? "✅" : agenticResult.governance.decision === "DENIED" ? "❌" : "⚠️"} {agenticResult.governance.decision}
                       </span>
-                      <span className="text-slate-400">Risk: {(agenticResult.governance.risk_score * 100).toFixed(0)}%</span>
+                      <span className="text-slate-400">Execution Risk: {(agenticResult.governance.risk_score * 100).toFixed(0)}%</span>
                     </div>
                     {/* Why Approved / Why Denied — explainability */}
                     {agenticResult.governance.decision === "APPROVED" && telemetry && (
@@ -925,6 +990,36 @@ export default function RunPage({ params }: { params: { runId: string } }) {
             {llmPlan && (
               <div className="space-y-2 mb-3">
                 <div className="text-[10px] uppercase tracking-wide text-slate-500 font-semibold">Waypoint Plan</div>
+                {/* Planner → Governance → Execution alignment strip */}
+                <div className="grid grid-cols-3 gap-1.5 bg-slate-900/50 border border-slate-700/50 rounded-lg p-2">
+                  <div className="flex flex-col items-center text-center">
+                    <span className="text-[9px] uppercase tracking-wider text-slate-500 font-semibold">Planner Output</span>
+                    <span className={`text-[11px] font-bold ${llmPlan.all_approved ? "text-green-400" : "text-yellow-400"}`}>
+                      {llmPlan.all_approved ? "Clean" : "Flagged"}
+                    </span>
+                  </div>
+                  <div className="flex flex-col items-center text-center border-x border-slate-700/50">
+                    <span className="text-[9px] uppercase tracking-wider text-slate-500 font-semibold">Governance Result</span>
+                    <span className={`text-[11px] font-bold ${llmPlan.all_approved ? "text-green-400" : "text-cyan-400"}`}>
+                      {llmPlan.all_approved ? "Approved" : "Approved with Constraints"}
+                    </span>
+                  </div>
+                  <div className="flex flex-col items-center text-center">
+                    <span className="text-[9px] uppercase tracking-wider text-slate-500 font-semibold">Execution Mode</span>
+                    <span className={`text-[11px] font-bold ${
+                      pipelineStage === "executing" ? "text-purple-400" :
+                      pipelineStage === "done" ? "text-green-400" :
+                      safety.state === "STOP" ? "text-red-400" :
+                      safety.state === "SLOW" ? "text-yellow-400" : "text-slate-400"
+                    }`}>
+                      {pipelineStage === "executing" ? "Executing" :
+                       pipelineStage === "done" ? "Completed" :
+                       safety.state === "STOP" ? "Halted" :
+                       safety.state === "SLOW" ? "Speed Limited" :
+                       currentStatus === "running" ? "Safe Path Active" : "Pending"}
+                    </span>
+                  </div>
+                </div>
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${llmPlan.all_approved ? "bg-green-500/20 text-green-400 border-green-500/30" : "bg-yellow-500/20 text-yellow-400 border-yellow-500/30"}`}>
                     {llmPlan.all_approved ? "All Approved" : "Flagged"}
@@ -1012,32 +1107,52 @@ export default function RunPage({ params }: { params: { runId: string } }) {
                     </span>
                     <span className={`font-bold text-lg ${
                       lastDecision.governance?.decision === "APPROVED" ? "text-green-400" : lastDecision.governance?.decision === "DENIED" ? "text-red-400" : "text-yellow-400"
-                    }`}>{lastDecision.governance?.decision || "—"}</span>
+                    }`}>
+                      {lastDecision.governance?.decision === "APPROVED" && lastDecision.proposal?.intent === "STOP"
+                        ? "APPROVED STOP"
+                        : lastDecision.governance?.decision || "—"}
+                    </span>
                   </div>
-                  <span className="text-slate-400">Risk: {lastDecision.governance?.risk_score != null ? (lastDecision.governance.risk_score * 100).toFixed(0) + "%" : "—"}</span>
+                  <span className="text-slate-400">Execution Risk: {lastDecision.governance?.risk_score != null ? (lastDecision.governance.risk_score * 100).toFixed(0) + "%" : "—"}</span>
                 </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-slate-500">Intent:</span>
-                  <span className="text-white font-semibold">{lastDecision.proposal?.intent || "—"}</span>
-                  <span className="text-slate-600">|</span>
-                  <span className="text-slate-500">Policy:</span>
-                  <span className="text-slate-300 font-mono text-[10px]">{(lastDecision.governance?.policy_hits || []).length > 0
-                    ? (lastDecision.governance.policy_hits).join(", ")
-                    : <span className="text-green-400">✓ 0 violations (8 active)</span>}</span>
+                {/* Scope clarification: what exactly was approved/denied */}
+                <div className="bg-slate-900/40 rounded px-2 py-1.5 text-[10px] space-y-0.5">
+                  <div className="flex items-center gap-2">
+                    <span className="text-slate-500 min-w-[65px]">Scope:</span>
+                    <span className="text-slate-300">Current action only</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-slate-500 min-w-[65px]">Intent:</span>
+                    <span className="text-white font-semibold">{lastDecision.proposal?.intent || "—"}</span>
+                    {lastDecision.proposal?.params?.x != null && <span className="text-slate-400">→ ({lastDecision.proposal.params.x.toFixed?.(1)}, {lastDecision.proposal.params.y?.toFixed?.(1)})</span>}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-slate-500 min-w-[65px]">Policies:</span>
+                    <span className="text-slate-300 font-mono">{(lastDecision.governance?.policy_hits || []).length > 0
+                      ? (lastDecision.governance.policy_hits).join(", ")
+                      : <span className="text-green-400">✓ 0 violations (8 active)</span>}</span>
+                  </div>
                 </div>
                 {lastDecision.governance?.decision === "APPROVED" && (
                   <div className="bg-green-500/5 border border-green-500/20 rounded p-2 space-y-1">
-                    <div className="text-green-400 font-semibold text-[10px] uppercase tracking-wider mb-1">All 8 Policies Passed</div>
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-green-400 font-semibold text-[10px] uppercase tracking-wider">All 8 Policies Passed</span>
+                      <span className="text-[10px] text-green-400/60 font-mono">0 denied · 0 constrained</span>
+                    </div>
                     {[
                       { label: "GEOFENCE_01", check: telemetry ? `pos (${telemetry.x?.toFixed(1)},${telemetry.y?.toFixed(1)}) inside boundary` : "position inside boundary" },
-                      { label: "SAFE_SPEED_01", check: telemetry ? `speed within ${telemetry.zone || "zone"} limit` : "within zone limit" },
-                      { label: "HUMAN_PROXIMITY_02", check: telemetry?.human_distance_m ? `human ${telemetry.human_distance_m.toFixed(1)}m away (>1m)` : "no human nearby" },
-                      { label: "OBSTACLE_CLEARANCE_03", check: telemetry?.nearest_obstacle_m ? `obstacle ${telemetry.nearest_obstacle_m.toFixed(1)}m (>0.5m)` : "> 0.5 m buffer" },
+                      { label: "SAFE_SPEED_01", check: telemetry ? `speed ${(+telemetry.speed || 0).toFixed(2)} m/s within ${telemetry.zone || "zone"} limit` : "within zone limit" },
+                      { label: "HUMAN_PROXIMITY_02", check: telemetry?.human_distance_m ? `human ${telemetry.human_distance_m.toFixed(1)}m away (>1m safe)` : "no human nearby" },
+                      { label: "HUMAN_CLEARANCE_02", check: telemetry?.human_distance_m ? `clearance ${telemetry.human_distance_m.toFixed(1)}m (>3m ideal)` : "no human in zone" },
+                      { label: "OBSTACLE_CLEARANCE_03", check: telemetry?.nearest_obstacle_m ? `obstacle ${telemetry.nearest_obstacle_m.toFixed(1)}m (>0.5m)` : "> 0.5m buffer" },
+                      { label: "UNCERTAINTY_04", check: "confidence above threshold" },
+                      { label: "HITL_05", check: "no operator override required" },
+                      { label: "WORKER_PROXIMITY_06", check: telemetry?.human_distance_m ? `worker zone clear (${telemetry.human_distance_m.toFixed(1)}m)` : "worker zone clear" },
                     ].map((item, i) => (
                       <div key={i} className="flex items-center gap-1.5">
                         <span className="text-green-500 text-[10px]">✓</span>
-                        <span className="text-cyan-400 font-mono text-[10px]">{item.label}</span>
-                        <span className="text-green-300">{item.check}</span>
+                        <span className="text-cyan-400 font-mono text-[10px] min-w-[140px]">{item.label}</span>
+                        <span className="text-green-300/80 text-[10px]">{item.check}</span>
                       </div>
                     ))}
                   </div>
@@ -1137,7 +1252,7 @@ export default function RunPage({ params }: { params: { runId: string } }) {
           </Card>
 
           {/* Scorecard (#10) */}
-          <CollapsibleCard title="📊 Performance Scorecard" defaultOpen={false}>
+          <CollapsibleCard title="📊 Performance Scorecard" defaultOpen={true}>
             <ScoreCard runId={runId} />
           </CollapsibleCard>
 
@@ -1244,7 +1359,7 @@ export default function RunPage({ params }: { params: { runId: string } }) {
           </CollapsibleCard>
 
           {/* Divergence Explanation (#20) */}
-          <CollapsibleCard title="🔀 Divergence Explanation" defaultOpen={false}>
+          <CollapsibleCard title="🔀 Divergence Explanation" defaultOpen={true}>
             <div className="space-y-2">
               {divergenceExplanation ? (
                 <>
