@@ -84,11 +84,11 @@ async def lifespan(app: FastAPI):
                 r.status = "failed"
                 r.ended_at = _utc_now()
                 mission_ids.add(r.mission_id)
-            # Reset missions that were "executing" back to "planned"
+            # Keep mission status aligned with the failed run state.
             for mid in mission_ids:
                 m = _db.query(_Mission).filter(_Mission.id == mid).first()
                 if m and m.status == "executing":
-                    m.status = "planned"
+                    m.status = "failed"
             _db.commit()
             logger.info("Startup: cleaned up %d stale runs, %d missions reset",
                         len(stale), len(mission_ids))
