@@ -207,6 +207,11 @@ class RunService:
         if run and run.status in ("running", "paused"):
             run.status = "stopped"
             run.ended_at = utc_now()
+            # Sync parent mission status
+            from app.db.models import Mission
+            mission = db.query(Mission).filter(Mission.id == run.mission_id).first()
+            if mission and mission.status == "executing":
+                mission.status = "paused"
             db.commit()
 
         # Log INTERVENTION event
@@ -231,6 +236,11 @@ class RunService:
         self._pause_flags[run_id].set()  # set = paused
 
         run.status = "paused"
+        # Sync parent mission status
+        from app.db.models import Mission
+        mission = db.query(Mission).filter(Mission.id == run.mission_id).first()
+        if mission and mission.status == "executing":
+            mission.status = "paused"
         db.commit()
 
         # Send STOP to simulator
@@ -256,6 +266,11 @@ class RunService:
             return
 
         run.status = "running"
+        # Sync parent mission status
+        from app.db.models import Mission
+        mission = db.query(Mission).filter(Mission.id == run.mission_id).first()
+        if mission and mission.status in ("paused", "draft"):
+            mission.status = "executing"
         db.commit()
 
         # Clear pause flag
@@ -731,6 +746,11 @@ class RunService:
                             if run:
                                 run.status = "failed"
                                 run.ended_at = utc_now()
+                                # Sync parent mission status
+                                from app.db.models import Mission as _Mission
+                                mission = db.query(_Mission).filter(_Mission.id == run.mission_id).first()
+                                if mission and mission.status == "executing":
+                                    mission.status = "failed"
                                 db.commit()
                         except Exception:
                             pass
@@ -750,6 +770,11 @@ class RunService:
                 if run:
                     run.status = "failed"
                     run.ended_at = utc_now()
+                    # Sync parent mission status
+                    from app.db.models import Mission as _Mission
+                    mission = db.query(_Mission).filter(_Mission.id == run.mission_id).first()
+                    if mission and mission.status == "executing":
+                        mission.status = "failed"
                     db.commit()
             finally:
                 db.close()

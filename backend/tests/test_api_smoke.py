@@ -191,3 +191,23 @@ def test_compliance_frameworks(client: TestClient):
     ids = [f["id"] for f in data["frameworks"]]
     assert "ISO_42001" in ids
     assert "EU_AI_ACT" in ids
+
+
+def test_duplicate_start_returns_409(client: TestClient):
+    """Starting a run for a mission that already has an active run returns 409."""
+    payload = {"title": "Dup Start Test", "goal": {"x": 5, "y": 5}}
+    created = client.post("/missions", json=payload).json()
+    mid = created["id"]
+
+    # First start should succeed
+    r1 = client.post(f"/missions/{mid}/start")
+    assert r1.status_code == 200
+    run_id = r1.json()["run_id"]
+
+    # Second start on same mission should be rejected
+    r2 = client.post(f"/missions/{mid}/start")
+    assert r2.status_code == 409
+    assert "active run" in r2.json()["detail"].lower()
+
+    # Cleanup: stop the run so it doesn't interfere with other tests
+    client.post(f"/runs/{run_id}/stop")
