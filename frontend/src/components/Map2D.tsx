@@ -259,6 +259,21 @@ export function Map2D({
         ctx.lineTo(br.x, tl.y);
         ctx.stroke();
         ctx.restore();
+      } else if (z.name === "staging") {
+        ctx.fillStyle = "#1a2230";
+        ctx.fillRect(tl.x, tl.y, zw, zh);
+        ctx.save();
+        ctx.setLineDash([4, 4]);
+        ctx.strokeStyle = "rgba(168,85,247,0.25)";
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(tl.x, tl.y);
+        ctx.lineTo(br.x, tl.y);
+        ctx.stroke();
+        ctx.restore();
+      } else if (z.name === "corridor") {
+        ctx.fillStyle = "#1e2838";
+        ctx.fillRect(tl.x, tl.y, zw, zh);
       } else {
         ctx.fillStyle = C.floorAisle;
         ctx.fillRect(tl.x, tl.y, zw, zh);
@@ -275,11 +290,13 @@ export function Map2D({
       ctx.fillText(zoneText, tl.x + zw / 2, tl.y + zh / 2);
     }
 
-    /* ── warehouse bays (docks & shelves) ───────────────────── */
+    /* ── warehouse bays (docks, picks, staging) ────────────── */
     for (const bay of bays) {
       if (typeof bay.x !== "number") continue;
       const p = w2c({ x: +bay.x, y: +bay.y });
       const isDock = bay.type === "dock";
+      const isPick = bay.type === "pick";
+      const isStaging = bay.type === "staging";
       const bw = isDock ? 4 * baseScale * zoom : 1.5 * baseScale * zoom;
       const bh = isDock ? 1.2 * baseScale * zoom : 3 * baseScale * zoom;
 
@@ -303,6 +320,30 @@ export function Map2D({
           ctx.lineTo(p.x + ci * bw * 0.15, p.y + bh * 0.3);
           ctx.stroke();
         }
+      } else if (isPick) {
+        /* pick face — small diamond marker in aisle */
+        const ds = Math.max(4, 5 * zoom);
+        ctx.fillStyle = "rgba(59,130,246,0.12)";
+        ctx.strokeStyle = "rgba(59,130,246,0.45)";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(p.x, p.y - ds);
+        ctx.lineTo(p.x + ds, p.y);
+        ctx.lineTo(p.x, p.y + ds);
+        ctx.lineTo(p.x - ds, p.y);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+      } else if (isStaging) {
+        /* staging — small square marker */
+        const ss = Math.max(4, 5 * zoom);
+        ctx.fillStyle = "rgba(168,85,247,0.1)";
+        ctx.strokeStyle = "rgba(168,85,247,0.35)";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.roundRect(p.x - ss, p.y - ss, ss * 2, ss * 2, 2);
+        ctx.fill();
+        ctx.stroke();
       } else {
         /* shelf bay — narrow vertical rectangle on walls */
         ctx.fillStyle = "rgba(100,116,139,0.1)";
@@ -325,11 +366,15 @@ export function Map2D({
       }
 
       /* bay label */
-      ctx.fillStyle = isDock ? "rgba(245,158,11,0.6)" : "rgba(148,163,184,0.5)";
+      const labelColor = isDock ? "rgba(245,158,11,0.6)"
+        : isPick ? "rgba(59,130,246,0.55)"
+        : isStaging ? "rgba(168,85,247,0.5)"
+        : "rgba(148,163,184,0.5)";
+      ctx.fillStyle = labelColor;
       ctx.font = `bold ${Math.max(7, 8 * zoom)}px monospace`;
       ctx.textAlign = "center";
       ctx.textBaseline = isDock ? "top" : "middle";
-      ctx.fillText(bay.id, p.x, isDock ? p.y + bh / 2 + 2 : p.y);
+      ctx.fillText(bay.id, p.x, isDock ? p.y + bh / 2 + 2 : p.y + (isPick ? 8 * zoom : 0));
     }
 
     /* ── grid ───────────────────────────────────────────────── */
@@ -368,35 +413,104 @@ export function Map2D({
       ctx.fillText(`${wy}m`, Math.max(p.x - 4, 24), p.y);
     }
 
-    /* ── shelf racks ────────────────────────────────────────── */
-    const shelves = [
-      { x1: 2, x2: 8, y: 11 },
-      { x1: 12, x2: 17, y: 11 },
-      { x1: 24, x2: 28, y: 11 },
-      { x1: 3, x2: 7, y: 1 },
-      { x1: 14, x2: 19, y: 1 },
-      { x1: 24, x2: 29, y: 1 },
-    ];
-    for (const s of shelves) {
-      const tl = w2c({ x: s.x1, y: s.y + 0.6 });
-      const br = w2c({ x: s.x2, y: s.y });
-      const sw = br.x - tl.x,
-        sh = br.y - tl.y;
+    /* ── rack rows (data-driven from world.racks) ──────────── */
+    const racks: { id: string; x1: number; x2: number; y: number; depth: number; levels?: number }[] = world?.racks ?? [];
+    for (const rack of racks) {
+      const depth = rack.depth ?? 1.0;
+      const tl = w2c({ x: rack.x1, y: rack.y + depth });
+      const br = w2c({ x: rack.x2, y: rack.y });
+      const rw = br.x - tl.x,
+        rh = br.y - tl.y;
+      /* rack body */
       ctx.fillStyle = C.shelf;
       ctx.strokeStyle = C.shelfTop;
       ctx.lineWidth = 1;
-      ctx.fillRect(tl.x, tl.y, sw, sh);
-      ctx.strokeRect(tl.x, tl.y, sw, sh);
-      const segs = Math.floor((s.x2 - s.x1) / 1.5);
+      ctx.fillRect(tl.x, tl.y, rw, rh);
+      ctx.strokeRect(tl.x, tl.y, rw, rh);
+      /* upright dividers every ~2m */
+      const span = rack.x2 - rack.x1;
+      const segs = Math.max(1, Math.round(span / 2));
       for (let i = 1; i < segs; i++) {
-        const sx = s.x1 + (i * (s.x2 - s.x1)) / segs;
-        const sp = w2c({ x: sx, y: s.y });
-        ctx.strokeStyle = "rgba(100,116,139,0.3)";
+        const sx = rack.x1 + (i * span) / segs;
+        const sp = w2c({ x: sx, y: rack.y });
+        ctx.strokeStyle = "rgba(100,116,139,0.35)";
         ctx.beginPath();
         ctx.moveTo(sp.x, tl.y);
-        ctx.lineTo(sp.x, tl.y + sh);
+        ctx.lineTo(sp.x, tl.y + rh);
         ctx.stroke();
       }
+      /* horizontal shelf lines for multi-level racks */
+      const levels = rack.levels ?? 1;
+      if (levels > 1) {
+        for (let lv = 1; lv < levels; lv++) {
+          const ly = tl.y + (rh * lv) / levels;
+          ctx.strokeStyle = "rgba(100,116,139,0.18)";
+          ctx.beginPath();
+          ctx.moveTo(tl.x + 1, ly);
+          ctx.lineTo(tl.x + rw - 1, ly);
+          ctx.stroke();
+        }
+      }
+      /* rack label */
+      ctx.fillStyle = "rgba(148,163,184,0.45)";
+      ctx.font = `${Math.max(7, 8 * zoom)}px monospace`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(rack.id, tl.x + rw / 2, tl.y + rh / 2);
+    }
+
+    /* ── features (charging, packing, fire exits) ───────────── */
+    const features: { type: string; x: number; y: number; label: string }[] = world?.features ?? [];
+    for (const feat of features) {
+      const p = w2c({ x: feat.x, y: feat.y });
+      const sz = Math.max(6, 7 * zoom);
+      if (feat.type === "charging_station") {
+        ctx.fillStyle = "rgba(34,197,94,0.15)";
+        ctx.strokeStyle = "rgba(34,197,94,0.5)";
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, sz, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        /* lightning bolt */
+        ctx.fillStyle = "rgba(34,197,94,0.7)";
+        ctx.font = `bold ${Math.max(10, 12 * zoom)}px system-ui`;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText("⚡", p.x, p.y);
+      } else if (feat.type === "packing_station") {
+        ctx.fillStyle = "rgba(168,85,247,0.12)";
+        ctx.strokeStyle = "rgba(168,85,247,0.4)";
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.roundRect(p.x - sz, p.y - sz * 0.7, sz * 2, sz * 1.4, 3);
+        ctx.fill();
+        ctx.stroke();
+        ctx.fillStyle = "rgba(168,85,247,0.6)";
+        ctx.font = `bold ${Math.max(8, 9 * zoom)}px system-ui`;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText("📦", p.x, p.y);
+      } else if (feat.type === "fire_exit") {
+        ctx.fillStyle = "rgba(239,68,68,0.15)";
+        ctx.strokeStyle = "rgba(239,68,68,0.5)";
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.roundRect(p.x - sz * 0.6, p.y - sz, sz * 1.2, sz * 2, 2);
+        ctx.fill();
+        ctx.stroke();
+        ctx.fillStyle = "rgba(239,68,68,0.7)";
+        ctx.font = `bold ${Math.max(8, 9 * zoom)}px system-ui`;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText("🚪", p.x, p.y);
+      }
+      /* feature label */
+      ctx.fillStyle = "rgba(148,163,184,0.5)";
+      ctx.font = `${Math.max(6, 7 * zoom)}px monospace`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "top";
+      ctx.fillText(feat.label, p.x, p.y + sz + 2);
     }
 
     /* ── geofence border ────────────────────────────────────── */
@@ -565,15 +679,21 @@ export function Map2D({
       }
     }
 
-    /* ── obstacles (crate boxes) ────────────────────────────── */
+    /* ── obstacles (typed: pallet, handcart, tote_stack) ───── */
+    const obstTypeColors: Record<string, { fill: string; border: string; label: string }> = {
+      pallet:     { fill: "#b45309", border: "#92400e", label: "PALLET" },
+      handcart:   { fill: "#6366f1", border: "#4338ca", label: "HANDCART" },
+      tote_stack: { fill: "#0891b2", border: "#0e7490", label: "TOTES" },
+    };
     for (const ob of obstacles) {
       const p = w2c({ x: +ob.x, y: +ob.y });
       const r = Math.max(5, +(ob.r ?? ob.radius ?? 0.5) * baseScale * zoom);
+      const ot = obstTypeColors[ob.type] ?? { fill: C.obstacle, border: C.obsBorder, label: "OBSTACLE" };
 
       /* glow */
       const grad = ctx.createRadialGradient(p.x, p.y, r * 0.3, p.x, p.y, r * 2.5);
-      grad.addColorStop(0, "rgba(220,38,38,0.15)");
-      grad.addColorStop(1, "rgba(220,38,38,0)");
+      grad.addColorStop(0, `${ot.fill}33`);
+      grad.addColorStop(1, `${ot.fill}00`);
       ctx.fillStyle = grad;
       ctx.beginPath();
       ctx.arc(p.x, p.y, r * 2.5, 0, Math.PI * 2);
@@ -581,16 +701,16 @@ export function Map2D({
 
       /* box */
       const bs = r * 1.4;
-      ctx.fillStyle = C.obstacle;
-      ctx.strokeStyle = C.obsBorder;
+      ctx.fillStyle = ot.fill;
+      ctx.strokeStyle = ot.border;
       ctx.lineWidth = 1.5;
       ctx.beginPath();
       ctx.roundRect(p.x - bs, p.y - bs, bs * 2, bs * 2, 3);
       ctx.fill();
       ctx.stroke();
 
-      /* cross */
-      ctx.strokeStyle = "rgba(255,255,255,0.3)";
+      /* cross hatching */
+      ctx.strokeStyle = "rgba(255,255,255,0.25)";
       ctx.lineWidth = 1;
       ctx.beginPath();
       ctx.moveTo(p.x - bs + 2, p.y - bs + 2);
@@ -603,7 +723,7 @@ export function Map2D({
       ctx.font = `bold ${Math.max(7, 8 * zoom)}px system-ui`;
       ctx.textAlign = "center";
       ctx.textBaseline = "bottom";
-      ctx.fillText("OBSTACLE", p.x, p.y - bs - 3);
+      ctx.fillText(ot.label, p.x, p.y - bs - 3);
     }
 
     /* ── human ──────────────────────────────────────────────── */

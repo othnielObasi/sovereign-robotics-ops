@@ -142,7 +142,7 @@ def test_world_model_loads_from_json():
     from app.world_model import GEOFENCE, ZONES, BAYS
     assert GEOFENCE["min_x"] == 0
     assert GEOFENCE["max_x"] == 40
-    assert len(ZONES) == 3
+    assert len(ZONES) == 4
     assert len(BAYS) >= 10
 
 

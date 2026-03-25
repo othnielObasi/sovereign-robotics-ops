@@ -15,15 +15,15 @@ interface SystemStatus {
   database: 'connected' | 'disconnected' | 'unknown';
 }
 
-// Realistic warehouse mission presets (coordinates match world.json bays/shelves/zones)
-// Zone layout: aisle (y 0–12), corridor (y 12–15), loading_bay (y 15–25)
+// Realistic warehouse mission presets (coordinates match world.json rack-face bays)
+// Zone layout: aisle (y 0–12), corridor (y 12–15), staging (y 15–19), loading_bay (y 19–25)
 const PRESETS = [
-  { title: "Deliver pallet to B-03",               goalX: 16,  goalY: 24, icon: "📦" },  // loading_bay
-  { title: "Transport hazmat container to B-05",    goalX: 28,  goalY: 24, icon: "⚠️" },  // loading_bay
-  { title: "Move fragile goods via corridor",       goalX: 12,  goalY: 14, icon: "🏷️" },  // corridor
-  { title: "Restock shelf S-02 from cold storage",  goalX: 0.5, goalY: 7,  icon: "🧊" },  // aisle
-  { title: "Patrol aisle perimeter",                goalX: 39,  goalY: 10, icon: "🛡️" },  // aisle
-  { title: "Transfer goods across corridor to R-02",goalX: 39.5,goalY: 7,  icon: "🔄" },  // aisle (right shelf)
+  { title: "Deliver pallet to B-03",              goalX: 16, goalY: 23,   icon: "📦" },  // dock bay
+  { title: "Transport hazmat container to B-05",   goalX: 28, goalY: 23,   icon: "⚠️" },  // dock bay
+  { title: "Pick items from rack A-04",            goalX: 21, goalY: 3.5,  icon: "🏷️" },  // aisle A pick face
+  { title: "Restock rack A-08 in aisle B",         goalX: 8,  goalY: 7.5,  icon: "🧊" },  // aisle B pick face
+  { title: "Move goods to staging S-01",           goalX: 8,  goalY: 17,   icon: "📦" },  // staging area
+  { title: "Cross-dock transfer via corridor",     goalX: 25, goalY: 13.5, icon: "🔄" },  // corridor
 ];
 
 const STATUS_BADGE: Record<MissionStatus, { label: string; cls: string }> = {

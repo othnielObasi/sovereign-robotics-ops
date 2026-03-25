@@ -132,15 +132,19 @@ class WalkingHuman:
 
 
 # Patrol routes that feel natural for a warehouse
+# Aisle A: y≈3.5 (between rack rows A and B)
+# Aisle B: y≈7.5 (between rack rows B and C)
+# Cross-aisle gaps at x≈12.5 and x≈25.5
 walking_humans: List[WalkingHuman] = [
     WalkingHuman("Worker A", [
-        {"x": 6, "y": 5}, {"x": 6, "y": 11}, {"x": 14, "y": 11}, {"x": 14, "y": 5},
+        {"x": 3, "y": 3.5}, {"x": 10, "y": 3.5},
+        {"x": 12.5, "y": 7.5}, {"x": 3, "y": 7.5},
     ], speed=0.5),
     WalkingHuman("Worker B", [
-        {"x": 25, "y": 16}, {"x": 32, "y": 16}, {"x": 32, "y": 22}, {"x": 25, "y": 22},
+        {"x": 10, "y": 17}, {"x": 20, "y": 17}, {"x": 20, "y": 22}, {"x": 10, "y": 22},
     ], speed=0.4),
     WalkingHuman("Forklift Op", [
-        {"x": 14, "y": 16}, {"x": 28, "y": 16}, {"x": 28, "y": 20}, {"x": 14, "y": 20},
+        {"x": 12, "y": 13.5}, {"x": 30, "y": 13.5}, {"x": 30, "y": 21}, {"x": 12, "y": 21},
     ], speed=0.7),
 ]
 
@@ -166,15 +170,15 @@ primary_human = WalkingHuman(
 # Append primary human to walking_humans so it is stepped and included in telemetry
 walking_humans.append(primary_human)
 
-# ---- Second robot (idle in loading bay, for visual realism) ----
+# ---- Second robot (idle in staging area, for visual realism) ----
 idle_robots: List[Dict[str, Any]] = [
-    {"x": 34.0, "y": 20.0, "theta": 1.57, "speed": 0.0, "label": "R-02 (Idle)", "status": "idle"},
+    {"x": 34.0, "y": 17.0, "theta": 1.57, "speed": 0.0, "label": "R-02 (Idle)", "status": "idle"},
 ]
 
 
 state: Dict[str, Any] = {
-    "x": 2.0,
-    "y": 2.0,
+    "x": 3.0,
+    "y": 3.5,
     "theta": 0.0,
     "speed": 0.0,
     "zone": "aisle",
@@ -496,11 +500,11 @@ def inject_scenario(request: Request, body: ScenarioRequest):
         # across the bay.  The governance engine should flag SAFE_SPEED_01
         # because loading_bay limit is 0.4 m/s.
         state["x"] = 5.0
-        state["y"] = 18.0
+        state["y"] = 21.0
         state["theta"] = 0.0
-        state["target"] = {"x": 35.0, "y": 18.0, "max_speed": 0.8}
+        state["target"] = {"x": 35.0, "y": 21.0, "max_speed": 0.8}
         state["speed"] = 0.8
-        return {"ok": True, "scenario": "speed_violation", "robot": {"x": 5.0, "y": 18.0}, "target": state["target"]}
+        return {"ok": True, "scenario": "speed_violation", "robot": {"x": 5.0, "y": 21.0}, "target": state["target"]}
 
     elif body.scenario == "geofence_breach":
         # Move robot to the edge of the geofence and set a target outside it.
