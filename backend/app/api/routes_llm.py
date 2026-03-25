@@ -410,7 +410,7 @@ async def failure_analysis(body: FailureRequest):
 
 class AgenticProposeRequest(BaseModel):
     instruction: str = Field(..., description="Natural-language task for the agent")
-    goal: Optional[Dict[str, float]] = Field(None, description="Optional {x, y} goal coordinate")
+    goal: Optional[Dict[str, Any]] = Field(None, description="Optional {x, y, zone?} goal coordinate")
 
 
 class AgenticThoughtStep(BaseModel):
