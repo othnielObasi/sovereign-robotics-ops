@@ -392,11 +392,6 @@ class RunService:
                     # If an explicit plan exists for this run, follow it waypoint-by-waypoint.
                     proposal: ActionProposal
                     nl_task = mission.title if mission else "Navigate to goal"
-                    world_state = None
-                    try:
-                        world_state = await self.sim.get_world()
-                    except Exception:
-                        pass
 
                     plan_wps = self._plans.get(run_id)
                     if plan_wps:
@@ -408,7 +403,12 @@ class RunService:
                             rationale="Following LLM plan waypoint",
                         )
                     else:
-                        # Agent proposes action (may be LLM-driven depending on settings)
+                        # No plan — agent proposes action (may call LLM)
+                        world_state = None
+                        try:
+                            world_state = await self.sim.get_world()
+                        except Exception:
+                            pass
                         try:
                             async with asyncio.timeout(self.AGENT_PROPOSAL_TIMEOUT):
                                 proposal = await self.agent.propose(telemetry, goal, nl_task, last_governance, world_state)

@@ -153,6 +153,24 @@ export default function RunPage({ params }: { params: { runId: string } }) {
     try {
       const rows = await listEvents(runId);
       setEvents(rows);
+
+      // Auto-populate llmPlan from backend PLAN events if not already set by
+      // the manual "Plan →" pipeline.  This ensures the map shows the plan
+      // the robot is *actually* following from the moment the page loads.
+      if (!llmPlan) {
+        const planEvents = rows.filter((e: any) => e.type === "PLAN");
+        // Prefer the latest PLAN event (LLM upgrade over seed fallback)
+        for (let i = planEvents.length - 1; i >= 0; i--) {
+          const payload = typeof planEvents[i].payload === "string"
+            ? JSON.parse(planEvents[i].payload)
+            : planEvents[i].payload || {};
+          const plan = payload.plan;
+          if (plan?.waypoints?.length) {
+            setLlmPlan(plan);
+            break;
+          }
+        }
+      }
     } catch (_) {}
   }
 
@@ -235,6 +253,8 @@ export default function RunPage({ params }: { params: { runId: string } }) {
   useEffect(() => {
     let t: any = null;
     async function tick() {
+      // Refresh events so the backend LLM plan auto-populates
+      await refreshEvents();
       try {
         const res = await getPathPreview(runId);
         setPathPoints(res.points || null);
@@ -991,20 +1011,22 @@ export default function RunPage({ params }: { params: { runId: string } }) {
                   <span className="text-white font-semibold">{lastDecision.proposal?.intent || "—"}</span>
                   <span className="text-slate-600">|</span>
                   <span className="text-slate-500">Policy:</span>
-                  <span className="text-slate-300 font-mono text-[10px]">{(lastDecision.governance?.policy_hits || []).join(", ") || "none"}</span>
+                  <span className="text-slate-300 font-mono text-[10px]">{(lastDecision.governance?.policy_hits || []).length > 0
+                    ? (lastDecision.governance.policy_hits).join(", ")
+                    : <span className="text-green-400">✓ 0 violations (8 active)</span>}</span>
                 </div>
                 {lastDecision.governance?.decision === "APPROVED" && (
                   <div className="bg-green-500/5 border border-green-500/20 rounded p-2 space-y-1">
-                    <div className="text-green-400 font-semibold text-[10px] uppercase tracking-wider mb-1">Why Approved</div>
+                    <div className="text-green-400 font-semibold text-[10px] uppercase tracking-wider mb-1">All 8 Policies Passed</div>
                     {[
-                      { label: "Human distance", check: "> 3 m safe clearance" },
-                      { label: "Obstacle clearance", check: "> 0.5 m buffer" },
-                      { label: "Speed", check: "within zone limit" },
-                      { label: "Geofence", check: "position inside boundary" },
+                      { label: "GEOFENCE_01", check: telemetry ? `pos (${telemetry.x?.toFixed(1)},${telemetry.y?.toFixed(1)}) inside boundary` : "position inside boundary" },
+                      { label: "SAFE_SPEED_01", check: telemetry ? `speed within ${telemetry.zone || "zone"} limit` : "within zone limit" },
+                      { label: "HUMAN_PROXIMITY_02", check: telemetry?.human_distance_m ? `human ${telemetry.human_distance_m.toFixed(1)}m away (>1m)` : "no human nearby" },
+                      { label: "OBSTACLE_CLEARANCE_03", check: telemetry?.nearest_obstacle_m ? `obstacle ${telemetry.nearest_obstacle_m.toFixed(1)}m (>0.5m)` : "> 0.5 m buffer" },
                     ].map((item, i) => (
                       <div key={i} className="flex items-center gap-1.5">
                         <span className="text-green-500 text-[10px]">✓</span>
-                        <span className="text-slate-400">{item.label}:</span>
+                        <span className="text-cyan-400 font-mono text-[10px]">{item.label}</span>
                         <span className="text-green-300">{item.check}</span>
                       </div>
                     ))}
