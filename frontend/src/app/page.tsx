@@ -21,8 +21,8 @@ const PRESETS = [
   { title: "Pick up returns from B-01",             goalX: 4,  goalY: 24, icon: "🔄" },
   { title: "Transport hazmat container to B-05",    goalX: 28, goalY: 24, icon: "⚠️" },
   { title: "Restock shelf S-02 from cold storage",  goalX: 0.5,goalY: 7,  icon: "🧊" },
-  { title: "Patrol perimeter for safety audit",     goalX: 28, goalY: 10, icon: "🛡️" },
-  { title: "Move fragile goods to shipping lane",   goalX: 12, goalY: 14, icon: "🏷️" },
+  { title: "Patrol perimeter for safety audit",     goalX: 39, goalY: 12, icon: "🛡️" },
+  { title: "Move fragile goods to corridor",        goalX: 12, goalY: 14, icon: "🏷️" },
 ];
 
 const STATUS_BADGE: Record<MissionStatus, { label: string; cls: string }> = {
