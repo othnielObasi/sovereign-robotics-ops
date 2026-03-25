@@ -24,7 +24,7 @@ router = APIRouter(prefix="/llm", tags=["llm"])
 
 class PlanRequest(BaseModel):
     instruction: str = Field(..., description="Natural-language instruction for the robot")
-    goal: Optional[Dict[str, float]] = Field(None, description="Optional {x, y} goal coordinate")
+    goal: Optional[Dict[str, Any]] = Field(None, description="Optional {x, y, zone?} goal coordinate")
     model: Optional[str] = Field(None, description="Preferred starting model (e.g. gemini-2.0-flash). Falls back through cascade.")
 
 
