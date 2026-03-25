@@ -225,6 +225,13 @@ class RunService:
         if self._ws_broadcast:
             await self._ws_broadcast(run_id, {"kind": "status", "data": {"status": "stopped"}})
 
+        # Return robot to parking station on manual stop
+        try:
+            await self.sim.reset_robot()
+            logger.info("Run %s: robot returned to parking after manual stop", run_id)
+        except Exception:
+            pass
+
     async def pause_run(self, db: Session, run_id: str) -> None:
         """Pause a running run — loop continues but stops executing actions."""
         run = db.query(Run).filter(Run.id == run_id).first()
@@ -719,6 +726,13 @@ class RunService:
                         db.commit()
                         logger.info("Run %s completed (mission %s)", run_id, mission.id if mission else "?")
 
+                        # Return robot to parking station (reset to start position)
+                        try:
+                            await self.sim.reset_robot()
+                            logger.info("Run %s: robot returned to parking station", run_id)
+                        except Exception as reset_err:
+                            logger.warning("Run %s: failed to reset robot to parking: %s", run_id, reset_err)
+
                         if self._ws_broadcast:
                             await self._ws_broadcast(run_id, {"kind": "status", "data": {"status": "completed"}})
 
@@ -752,6 +766,12 @@ class RunService:
                                 if mission and mission.status == "executing":
                                     mission.status = "failed"
                                 db.commit()
+                        except Exception:
+                            pass
+                        # Return robot to parking station even on failure
+                        try:
+                            await self.sim.reset_robot()
+                            logger.info("Run %s: robot returned to parking after failure", run_id)
                         except Exception:
                             pass
                         break
