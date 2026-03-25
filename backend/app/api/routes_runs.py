@@ -133,6 +133,13 @@ async def start_run(
                    f"Stop an existing run before starting a new one (max {MAX_CONCURRENT_RUNS}).",
         )
 
+    # Reset simulator robot to starting position for a clean run
+    try:
+        await svc.sim.reset_robot()
+        logger.info("Sim robot reset to start position for mission %s", mission_id)
+    except Exception as reset_err:
+        logger.warning("Failed to reset sim robot: %s — continuing with current position", reset_err)
+
     # Create run in 'planning' status — loop not launched yet
     run = svc.start_run(db, mission_id)
 

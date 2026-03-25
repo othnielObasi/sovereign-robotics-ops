@@ -386,6 +386,30 @@ def world(request: Request):
     }
 
 
+@app.post("/reset")
+def reset_robot(request: Request):
+    """Reset robot to starting position (2, 2) with zero velocity.
+
+    Called at the beginning of each run to ensure a clean starting state.
+    """
+    _require_sim_token(request)
+    state["x"] = 2.0
+    state["y"] = 2.0
+    state["theta"] = 0.0
+    state["speed"] = 0.0
+    state["target"] = None
+    state["events"] = []
+    state["last_update"] = time.time()
+    # Reset perception to clean state
+    state["zone"] = _zone_for(2.0, 2.0)
+    state["nearest_obstacle_m"] = float(_nearest_obstacle(2.0, 2.0))
+    hd, hc, hd_m = _human_signal(2.0, 2.0)
+    state["human_detected"] = hd
+    state["human_conf"] = float(hc)
+    state["human_distance_m"] = float(hd_m)
+    return {"ok": True, "position": {"x": 2.0, "y": 2.0}, "msg": "Robot reset to start"}
+
+
 @app.post("/command")
 def command(request: Request, cmd: Command):
     _require_sim_token(request)

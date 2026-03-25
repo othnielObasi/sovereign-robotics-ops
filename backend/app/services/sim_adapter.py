@@ -47,6 +47,12 @@ class SimAdapter:
         r.raise_for_status()
         return r.json()
 
+    async def reset_robot(self) -> Dict[str, Any]:
+        """Reset robot to starting position in the simulator."""
+        r = await self._client.post(f"{self.base_url}/reset")
+        r.raise_for_status()
+        return r.json()
+
     async def post_scenario(self, scenario: str) -> Dict[str, Any]:
         """Inject a deterministic scenario into the simulator."""
         r = await self._client.post(
