@@ -31,6 +31,5 @@ def generate_fallback_waypoint(telemetry: Dict[str, Any], goal: Dict[str, Any]) 
         "y": float(ny),
         # Use conservative slow speed near humans
         "max_speed": float(min(settings.max_speed_near_human, 0.3)),
-        "meta": {"source": "local_fallback"},
     }
     return waypoint

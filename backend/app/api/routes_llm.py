@@ -30,7 +30,7 @@ class PlanRequest(BaseModel):
 
 class ExecuteRequest(BaseModel):
     instruction: str = Field(..., description="The original instruction")
-    waypoints: List[Dict[str, float]] = Field(..., description="Waypoints to execute [{x, y, max_speed}, ...]")
+    waypoints: List[Dict[str, Any]] = Field(..., description="Waypoints to execute [{x, y, max_speed}, ...]")
     rationale: str = Field("", description="Plan rationale from Gemini")
 
 
@@ -154,12 +154,6 @@ async def generate_plan(body: PlanRequest):
 
     Returns the plan, rationale, and per-waypoint governance results.
     """
-    if not settings.gemini_configured:
-        raise HTTPException(
-            status_code=503,
-            detail="Gemini is not configured. Set GEMINI_API_KEY and GEMINI_ENABLED=true.",
-        )
-
     # Get current telemetry for context
     try:
         telemetry = await _sim.get_telemetry()
@@ -332,8 +326,6 @@ async def execute_plan(body: ExecuteRequest):
 @router.post("/analyze")
 async def analyze_telemetry(body: AnalyzeRequest):
     """Analyze mission event logs for anomalies, denials, safety near-misses, and compliance risks."""
-    if not settings.gemini_configured:
-        raise HTTPException(status_code=503, detail="Gemini is not configured. Set GEMINI_API_KEY and GEMINI_ENABLED=true.")
     if not body.events:
         raise HTTPException(status_code=400, detail="No events provided for analysis.")
     planner = _get_planner()
@@ -349,8 +341,6 @@ async def analyze_telemetry(body: AnalyzeRequest):
 @router.post("/scene", response_model=SceneResponse)
 async def analyze_scene(body: SceneRequest):
     """Analyze a scene description for hazards, obstacles, humans, and recommend robot action."""
-    if not settings.gemini_configured:
-        raise HTTPException(status_code=503, detail="Gemini is not configured. Set GEMINI_API_KEY and GEMINI_ENABLED=true.")
     telemetry = None
     if body.include_telemetry:
         try:
@@ -380,8 +370,6 @@ async def analyze_scene(body: SceneRequest):
 @router.post("/failure-analysis", response_model=FailureResponse)
 async def failure_analysis(body: FailureRequest):
     """Detect failure patterns: stuck robots, oscillation, repeated policy conflicts."""
-    if not settings.gemini_configured:
-        raise HTTPException(status_code=503, detail="Gemini is not configured. Set GEMINI_API_KEY and GEMINI_ENABLED=true.")
     if not body.events:
         raise HTTPException(status_code=400, detail="No events provided for failure analysis.")
     try:
@@ -433,8 +421,6 @@ class AgenticResponse(BaseModel):
 @router.post("/agentic/propose", response_model=AgenticResponse)
 async def agentic_propose(body: AgenticProposeRequest):
     """Run the agentic ReAct planner: reason → use tools → propose → govern."""
-    if not settings.gemini_configured:
-        raise HTTPException(status_code=503, detail="Gemini API not configured.")
     try:
         telemetry = await _sim.get_telemetry()
     except Exception as e:
