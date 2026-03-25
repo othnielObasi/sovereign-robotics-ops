@@ -85,6 +85,7 @@ class RunService:
             prev_hash=prev_hash,
         )
         db.add(row)
+        db.flush()  # ensure subsequent _append_event calls see this row for chain linking
         return row
 
     def start_run(self, db: Session, mission_id: str) -> Run:
