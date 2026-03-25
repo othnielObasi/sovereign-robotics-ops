@@ -15,14 +15,15 @@ interface SystemStatus {
   database: 'connected' | 'disconnected' | 'unknown';
 }
 
-// Realistic warehouse mission presets (coordinates match world.json bays/shelves)
+// Realistic warehouse mission presets (coordinates match world.json bays/shelves/zones)
+// Zone layout: aisle (y 0–12), corridor (y 12–15), loading_bay (y 15–25)
 const PRESETS = [
-  { title: "Deliver pallet to B-03",               goalX: 16, goalY: 24, icon: "📦" },
-  { title: "Pick up returns from B-01",             goalX: 4,  goalY: 24, icon: "🔄" },
-  { title: "Transport hazmat container to B-05",    goalX: 28, goalY: 24, icon: "⚠️" },
-  { title: "Restock shelf S-02 from cold storage",  goalX: 0.5,goalY: 7,  icon: "🧊" },
-  { title: "Patrol perimeter for safety audit",     goalX: 39, goalY: 12, icon: "🛡️" },
-  { title: "Move fragile goods to corridor",        goalX: 12, goalY: 14, icon: "🏷️" },
+  { title: "Deliver pallet to B-03",               goalX: 16,  goalY: 24, icon: "📦" },  // loading_bay
+  { title: "Transport hazmat container to B-05",    goalX: 28,  goalY: 24, icon: "⚠️" },  // loading_bay
+  { title: "Move fragile goods via corridor",       goalX: 12,  goalY: 14, icon: "🏷️" },  // corridor
+  { title: "Restock shelf S-02 from cold storage",  goalX: 0.5, goalY: 7,  icon: "🧊" },  // aisle
+  { title: "Patrol aisle perimeter",                goalX: 39,  goalY: 10, icon: "🛡️" },  // aisle
+  { title: "Transfer goods across corridor to R-02",goalX: 39.5,goalY: 7,  icon: "🔄" },  // aisle (right shelf)
 ];
 
 const STATUS_BADGE: Record<MissionStatus, { label: string; cls: string }> = {
