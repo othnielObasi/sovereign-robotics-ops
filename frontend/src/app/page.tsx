@@ -15,12 +15,12 @@ interface SystemStatus {
   database: 'connected' | 'disconnected' | 'unknown';
 }
 
-// Realistic warehouse mission presets
+// Realistic warehouse mission presets (coordinates match world.json bays/shelves)
 const PRESETS = [
-  { title: "Deliver pallet to Bay 3",              goalX: 15, goalY: 7,  icon: "📦" },
-  { title: "Pick up returns from Dock A",           goalX: 25, goalY: 15, icon: "🔄" },
-  { title: "Transport hazmat container to Zone D",  goalX: 8,  goalY: 18, icon: "⚠️" },
-  { title: "Restock shelf B-12 from cold storage",  goalX: 20, goalY: 4,  icon: "🧊" },
+  { title: "Deliver pallet to B-03",               goalX: 16, goalY: 24, icon: "📦" },
+  { title: "Pick up returns from B-01",             goalX: 4,  goalY: 24, icon: "🔄" },
+  { title: "Transport hazmat container to B-05",    goalX: 28, goalY: 24, icon: "⚠️" },
+  { title: "Restock shelf S-02 from cold storage",  goalX: 0.5,goalY: 7,  icon: "🧊" },
   { title: "Patrol perimeter for safety audit",     goalX: 28, goalY: 10, icon: "🛡️" },
   { title: "Move fragile goods to shipping lane",   goalX: 12, goalY: 14, icon: "🏷️" },
 ];
@@ -369,7 +369,7 @@ export default function HomePage() {
                       </span>
                     </div>
                     <div className="text-sm text-slate-400">
-                      Goal: ({m.goal?.x}, {m.goal?.y}) • {new Date(m.created_at).toLocaleString()}
+                      Goal: ({m.goal?.x}, {m.goal?.y}){m.goal?.zone && <span className="ml-1 text-cyan-400">[{m.goal.zone}]</span>} • {new Date(m.created_at).toLocaleString()}
                     </div>
                   </div>
                   <div className="flex gap-2 ml-4 flex-shrink-0">

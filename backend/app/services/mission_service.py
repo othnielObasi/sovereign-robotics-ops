@@ -154,6 +154,17 @@ class MissionService:
         return m
 
     # --- Goal normalization helpers ---
+
+    @staticmethod
+    def _zone_for(x: float, y: float, world: Dict[str, Any]) -> str:
+        """Determine zone name from coordinates using world zone definitions."""
+        for z in (world or {}).get("zones", []):
+            r = z.get("rect", {})
+            if (r.get("min_x", 0) <= x <= r.get("max_x", 0)
+                    and r.get("min_y", 0) <= y <= r.get("max_y", 0)):
+                return z["name"]
+        return "aisle"
+
     def _normalize_goal(self, goal: Dict[str, Any]) -> Dict[str, Any]:
         """Clamp goal to geofence and snap to nearest bay if within threshold.
 
@@ -238,7 +249,8 @@ class MissionService:
         if best is not None and best_d is not None and best_d <= SNAP_THRESHOLD:
             x, y = best
 
-        return {"x": x, "y": y}
+        zone = self._zone_for(x, y, world)
+        return {"x": x, "y": y, "zone": zone}
 
     def _resolve_bay_coords(self, bay_id: str) -> Dict[str, Any]:
         """Resolve a bay ID to canonical coordinates using the world definition.
@@ -276,7 +288,9 @@ class MissionService:
             bays = (world or {}).get("bays") or []
             for b in bays:
                 if str(b.get("id", "")).upper() == str(bay_id).upper():
-                    return {"x": float(b.get("x", 0)), "y": float(b.get("y", 0))}
+                    bx, by = float(b.get("x", 0)), float(b.get("y", 0))
+                    zone = self._zone_for(bx, by, world)
+                    return {"x": bx, "y": by, "zone": zone}
         except Exception:
             pass
         # Fallback: return origin

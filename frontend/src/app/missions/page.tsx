@@ -263,7 +263,7 @@ export default function MissionsPage() {
                         <span className="font-mono text-xs text-slate-500">{m.id}</span>
                         {m.goal && (
                           <span className="ml-3">
-                            Goal: ({m.goal.x}, {m.goal.y})
+                            Goal: ({m.goal.x}, {m.goal.y}){m.goal?.zone && <span className="ml-1 text-cyan-400">[{m.goal.zone}]</span>}
                           </span>
                         )}
                         <span className="ml-3">
