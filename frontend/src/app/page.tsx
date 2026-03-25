@@ -120,16 +120,19 @@ export default function HomePage() {
     fetchMissions();
   }, [status.api]);
 
-  // Phase E: Fetch analytics when connected
+  // Phase E: Fetch analytics when connected (deferred to avoid blocking initial render)
   useEffect(() => {
     if (status.api !== 'connected') return;
-    (async () => {
-      try { setScoreTrends((await getScoreTrends(20)).trends || []); } catch (_) {}
-      try { setCrossRunLearning(await getCrossRunLearning()); } catch (_) {}
-      try { setTuningRecs(await getTuningRecommendations()); } catch (_) {}
-      try { setCrossRunIntegrity(await checkCrossRunIntegrity()); } catch (_) {}
-      try { setOptimizationEnvelope(await getOptimizationEnvelope()); } catch (_) {}
-    })();
+    const timer = setTimeout(() => {
+      (async () => {
+        try { setScoreTrends((await getScoreTrends(20)).trends || []); } catch (_) {}
+        try { setCrossRunLearning(await getCrossRunLearning()); } catch (_) {}
+        try { setTuningRecs(await getTuningRecommendations()); } catch (_) {}
+        try { setCrossRunIntegrity(await checkCrossRunIntegrity()); } catch (_) {}
+        try { setOptimizationEnvelope(await getOptimizationEnvelope()); } catch (_) {}
+      })();
+    }, 2000);
+    return () => clearTimeout(timer);
   }, [status.api]);
 
   // Create mission

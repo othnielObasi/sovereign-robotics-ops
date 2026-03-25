@@ -5,7 +5,7 @@ async function fetchWithRetry(
   input: RequestInfo,
   init?: RequestInit,
   retries = 2,
-  delayMs = 1500,
+  delayMs = 500,
 ): Promise<Response> {
   for (let attempt = 0; ; attempt++) {
     try {
