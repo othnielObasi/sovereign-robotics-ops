@@ -16,7 +16,7 @@ import { useRouter } from "next/navigation";
 import type { Mission, MissionStatus } from "@/lib/types";
 
 /* ── Bay resolver (same logic as run page) ── */
-const BAY_PATTERN = /\b([BSR])-?(\d{1,2})\b/i;
+const BAY_PATTERN = /\b([ABSR])-?(\d{1,2})\b/i;
 function resolveBayGoal(text: string, bays: any[]): { x: number; y: number } | null {
   if (!text || !bays?.length) return null;
   const match = text.match(BAY_PATTERN);

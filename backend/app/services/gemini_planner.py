@@ -26,8 +26,8 @@ def resolve_bay_from_instruction(instruction: str, bays: List[Dict[str, Any]]) -
     if not bays:
         return None
     bay_map = {b["id"].upper(): b for b in bays if "id" in b}
-    # Look for bay IDs in the instruction (e.g. B-03, S-01, R-02)
-    matches = re.findall(r'\b([BSR]-\d{1,3})\b', instruction.upper())
+    # Look for bay IDs in the instruction (e.g. A-04, B-03, S-01, R-02)
+    matches = re.findall(r'\b([ABSR]-\d{1,3})\b', instruction.upper())
     for m in matches:
         if m in bay_map:
             b = bay_map[m]
@@ -195,13 +195,12 @@ class GeminiPlanner:
                               rationale="[Fallback] Deterministic path to goal.")
 
     def _deterministic_plan(self, telemetry: Dict[str, Any], goal: Optional[Dict[str, float]]) -> Dict[str, Any]:
-        x, y = float(telemetry.get("x", 0)), float(telemetry.get("y", 0))
         gx = float(goal.get("x", 15) if goal else 15)
         gy = float(goal.get("y", 10) if goal else 10)
         speed = 0.4 if telemetry.get("human_detected") else 0.6
         return {
-            "waypoints": [{"x": (x+gx)/2, "y": (y+gy)/2, "max_speed": speed}, {"x": gx, "y": gy, "max_speed": speed}],
-            "rationale": "[Fallback] Deterministic 2-waypoint plan.",
+            "waypoints": [{"x": gx, "y": gy, "max_speed": speed}],
+            "rationale": "[Fallback] Deterministic direct-to-goal plan.",
             "estimated_time_s": 15.0,
             "model_used": "deterministic_fallback",
         }

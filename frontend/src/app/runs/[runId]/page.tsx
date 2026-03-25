@@ -10,7 +10,7 @@ import type { WsMessage } from "@/lib/types";
 import Link from "next/link";
 
 /* ── Bay resolver (matches backend resolve_bay_from_instruction) ── */
-const BAY_PATTERN = /\b([BSR])-?(\d{1,2})\b/i;
+const BAY_PATTERN = /\b([ABSR])-?(\d{1,2})\b/i;
 function resolveBayGoal(instruction: string, bays: any[]): { x: number; y: number } | null {
   if (!instruction || !bays?.length) return null;
   const match = instruction.match(BAY_PATTERN);
