@@ -349,6 +349,12 @@ def _step() -> None:
         state["events"].append("geofence_violation")
 
 
+@app.get("/health")
+def health():
+    """Liveness check — no auth required."""
+    return {"status": "ok"}
+
+
 @app.get("/telemetry")
 def telemetry(request: Request):
     _require_sim_token(request)

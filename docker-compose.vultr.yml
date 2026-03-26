@@ -54,7 +54,7 @@ services:
       db:
         condition: service_healthy
       sim:
-        condition: service_started
+        condition: service_healthy
     restart: always
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health', timeout=10)"]
@@ -116,9 +116,16 @@ services:
       dockerfile: Dockerfile
     environment:
       SIM_TICK_HZ: "10"
+      SIM_TOKEN: "${SIM_TOKEN}"
     command: >
       uvicorn server:app --host 0.0.0.0 --port 8090
     restart: always
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8090/health', timeout=5)"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     networks:
       - backend_net
     deploy:
