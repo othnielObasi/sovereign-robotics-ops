@@ -1,3 +1,17 @@
+# docker-compose.vultr.yml — Vultr production orchestration
+#
+# Architecture:  Nginx (host) → frontend:3000, backend:8080
+#   All ports bind to 127.0.0.1 so only Nginx can reach them.
+#   Two Docker networks isolate frontend from database traffic.
+#
+# Services:
+#   frontend — Next.js (SSR, serves UI, proxies /api to backend)
+#   backend  — FastAPI (8080), runs Alembic migrations on start
+#   db       — PostgreSQL 16, data persisted via named volume
+#   sim      — Mock robot simulator (8090), no public exposure
+#
+# Usage:
+#   POSTGRES_PASSWORD=... GEMINI_API_KEY=... docker compose -f docker-compose.vultr.yml up -d
 
 networks:
   frontend_net:

@@ -1,5 +1,14 @@
 from __future__ import annotations
 
+"""Mission CRUD routes.
+
+All endpoints require JWT auth (via ``get_current_user``) for mutations and
+delegate business logic to ``MissionService``.  Read endpoints are
+unauthenticated so the dashboard can freely poll without a token.
+
+State machine: draft → executing → paused ↔ draft (resume) → completed.
+"""
+
 import json
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session

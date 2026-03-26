@@ -1,5 +1,13 @@
 from __future__ import annotations
 
+"""Lightweight path planner for run preview and obstacle avoidance.
+
+Uses simple computational-geometry helpers (segment–point distance,
+line–circle intersection) to decide whether a straight-line path is
+clear.  If an obstacle blocks the straight line, one detour waypoint
+is added around it.  Intentionally kept simple for hackathon scope.
+"""
+
 import math
 from typing import Dict, List, Tuple, Any
 

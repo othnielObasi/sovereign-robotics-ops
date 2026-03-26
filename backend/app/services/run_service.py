@@ -1,5 +1,26 @@
 from __future__ import annotations
 
+"""Run lifecycle manager — the runtime core of the SRO platform.
+
+This module owns the full lifecycle of a "run" (a single execution attempt
+of a mission).  Key responsibilities:
+
+1. **Start / stop / pause / resume** — state machine transitions with
+   parent-mission synchronisation and operator intervention logging.
+2. **The run loop** (`_run_loop`) — an async tick-based control loop that:
+   - Reads telemetry from the simulator.
+   - Validates telemetry plausibility (anti-spoofing).
+   - Asks the agent/planner for the next action proposal.
+   - Passes proposals through the governance engine.
+   - Executes approved commands on the simulator.
+   - Records every decision in a SHA-256 hash-chained event log
+     for tamper-evident auditing.
+3. **Diagnostics** — stagnation detection, execution verification,
+   runtime integrity checks, and replan-on-denial logic.
+4. **Post-run analytics** — safety validation, cross-run learning, and
+   lesson extraction (fire-and-forget after completion).
+"""
+
 import asyncio
 import json
 import logging
@@ -31,33 +52,37 @@ class RunService:
     """
 
     def __init__(self):
-        self._tasks: Dict[str, asyncio.Task] = {}
-        self._stop_flags: Dict[str, asyncio.Event] = {}
-        self._pause_flags: Dict[str, asyncio.Event] = {}  # set = paused
-        self._ws_broadcast = None  # injected by WS manager
-        self._plans: Dict[str, List[Dict[str, Any]]] = {}
+        # --- Concurrency primitives (keyed by run_id) ---
+        self._tasks: Dict[str, asyncio.Task] = {}       # active asyncio loop tasks
+        self._stop_flags: Dict[str, asyncio.Event] = {} # set → graceful shutdown
+        self._pause_flags: Dict[str, asyncio.Event] = {} # set = paused (loop sleeps)
+        self._ws_broadcast = None  # WebSocket broadcast callback, injected by WS manager
 
-        # Diagnostics state per run
-        self._last_positions: Dict[str, tuple[float, float]] = {}
-        self._stagnant_counts: Dict[str, int] = {}
-        self.STAGNATION_THRESHOLD_M = 0.02  # movement below this counts as stagnant
-        self.STAGNATION_CYCLES = 10
+        # --- Plan state (keyed by run_id) ---
+        self._plans: Dict[str, List[Dict[str, Any]]] = {}  # ordered waypoint queue
 
-        # Replan-on-denial: track consecutive denials of the current waypoint
-        self._wp_denial_counts: Dict[str, int] = {}
-        self.REPLAN_DENIAL_THRESHOLD = 5  # re-plan after N consecutive denials
+        # --- Stagnation detection ---
+        self._last_positions: Dict[str, tuple[float, float]] = {}  # last (x, y) per run
+        self._stagnant_counts: Dict[str, int] = {}  # consecutive low-movement ticks
+        self.STAGNATION_THRESHOLD_M = 0.02  # metres: movement below this = stagnant
+        self.STAGNATION_CYCLES = 10         # ticks: emit STAGNATION alert after this many
 
-        # Executed path tracking: actual positions visited per run
+        # --- Replan-on-denial ---
+        self._wp_denial_counts: Dict[str, int] = {}  # consecutive governance denials
+        self.REPLAN_DENIAL_THRESHOLD = 5  # trigger LLM re-plan after N consecutive denials
+
+        # --- Executed path tracking (for UI visualisation & scoring) ---
         self._executed_paths: Dict[str, List[Dict[str, Any]]] = {}
 
-        # Per-run telemetry validators (anti-spoofing)
+        # --- Anti-spoofing: per-run telemetry plausibility validators ---
         self._tel_validators: Dict[str, TelemetryValidator] = {}
 
-        # Per-run runtime integrity checkers (anti-gaming)
+        # --- Anti-gaming: per-run runtime integrity checkers ---
         self._integrity_checkers: Dict[str, RuntimeIntegrityChecker] = {}
 
-        # Execution verification: max tolerable discrepancy
-        self.EXEC_VERIFY_TOLERANCE_M = 2.0
+        # --- Execution verification ---
+        self.EXEC_VERIFY_TOLERANCE_M = 2.0  # metres: max allowed discrepancy between
+                                             # commanded and actual position after exec
 
         self.sim = SimAdapter()
         self.agent = AgentRouter()
@@ -68,6 +93,15 @@ class RunService:
         self._ws_broadcast = broadcaster
 
     def _append_event(self, db: Session, run_id: str, etype: str, payload: Dict[str, Any]) -> Event:
+        """Append an event to the tamper-evident hash chain for a run.
+
+        Each event stores the SHA-256 hash of the previous event, forming a
+        linked chain analogous to a blockchain.  Any retrospective modification
+        of an event breaks the chain, which is detected by the audit verifier
+        (see ``replay_service.verify_chain``).
+
+        Returns the newly created Event ORM row (already flushed to DB).
+        """
         # Get previous event hash for chain linking
         prev = (
             db.query(Event)
@@ -342,7 +376,24 @@ class RunService:
     AGENT_PROPOSAL_TIMEOUT = 15  # seconds
 
     async def _run_loop(self, run_id: str) -> None:
-        # IMPORTANT: DB sessions are not thread-safe; create per loop.
+        """Core tick-based control loop for a single run.
+
+        Each tick:
+          1. Read telemetry from the simulator.
+          2. Validate telemetry plausibility (anti-spoofing).
+          3. Detect stagnation (robot not moving).
+          4. Obtain an action proposal — either the next planned waypoint
+             or a live agent/LLM proposal.
+          5. Evaluate the proposal through the governance engine.
+          6. If approved, execute the command on the simulator.
+          7. If denied repeatedly, trigger autonomous re-planning.
+          8. Record every decision in the hash-chained event log.
+          9. Broadcast state to the frontend via WebSocket.
+
+        The loop exits when the robot reaches the goal (STOP approved),
+        the operator stops/pauses, or too many consecutive errors occur.
+        """
+        # IMPORTANT: DB sessions are not thread-safe; create per tick iteration.
         from app.db.session import SessionLocal
         from app.db.models import Mission
 

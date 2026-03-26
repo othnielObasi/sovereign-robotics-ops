@@ -1,3 +1,14 @@
+/**
+ * SRO frontend API client.
+ *
+ * Every exported function maps 1–1 to a backend REST endpoint.
+ * All calls go through `fetchWithRetry` for automatic retry on
+ * network failures and consistent error parsing.
+ *
+ * Convention: GET calls use `{ cache: "no-store" }` to defeat
+ * Next.js server-side caching so the dashboard always shows live data.
+ */
+
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "/api";
 
 /** Retry wrapper – retries on network failures (TypeError: Failed to fetch) */

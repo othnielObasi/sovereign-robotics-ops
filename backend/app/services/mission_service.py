@@ -15,8 +15,16 @@ from app.utils.ids import new_id
 from app.utils.time import utc_now
 
 
-class MissionService:
-    # ── helpers ──────────────────────────────────────────────
+class MissionService:    """Manages mission CRUD, goal normalisation, and audit logging.
+
+    A *mission* represents a high-level objective (e.g. "deliver to Bay C3").
+    The service handles:
+    - Creating missions with auto-resolved bay coordinates.
+    - Updating missions (only when in draft/paused state).
+    - Normalising goal coordinates: clamping to geofence, snapping to
+      the nearest bay, and resolving bay names from natural-language titles.
+    - Recording every mutation in the immutable ``mission_audit`` table.
+    """    # ── helpers ──────────────────────────────────────────────
 
     def _audit(
         self,
@@ -29,6 +37,7 @@ class MissionService:
         details: Optional[str] = None,
         actor: str = "operator",
     ) -> MissionAudit:
+        """Write an immutable audit-trail entry for a mission mutation."""
         entry = MissionAudit(
             mission_id=mission_id,
             ts=utc_now(),
@@ -157,7 +166,12 @@ class MissionService:
 
     @staticmethod
     def _zone_for(x: float, y: float, world: Dict[str, Any]) -> str:
-        """Determine zone name from coordinates using world zone definitions."""
+        """Determine the warehouse zone name for a coordinate pair.
+
+        Used during goal normalisation to tag destinations with their zone
+        (e.g. 'loading_dock', 'aisle'), which affects speed-limit policies.
+        Falls back to 'aisle' if no zone boundary contains the point.
+        """
         for z in (world or {}).get("zones", []):
             r = z.get("rect", {})
             if (r.get("min_x", 0) <= x <= r.get("max_x", 0)

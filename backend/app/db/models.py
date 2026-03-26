@@ -1,5 +1,20 @@
 from __future__ import annotations
 
+"""SQLAlchemy ORM models — the persistent data model for SRO.
+
+Key entities:
+- **Mission** — a high-level delivery/patrol objective.
+- **Run** — a single execution attempt of a mission (many per mission).
+- **Event** — hash-chained immutable event log per run (telemetry, decisions, alerts).
+- **GovernanceDecisionRecord** — every governance evaluation, queryable for audits.
+- **MissionAudit** — immutable changelog for mission mutations.
+- **OperatorApproval** — human-in-the-loop approval records.
+- **AgentMemoryEntry** — cross-run learning / persistent agent knowledge.
+- **PolicyVersion** — immutable snapshots of policy parameters.
+- **CircuitBreakerState** — persistent circuit-breaker for repeated denials.
+- **TelemetrySample** — raw telemetry snapshots for analytics.
+"""
+
 from sqlalchemy import Column, String, DateTime, Text, ForeignKey, Integer, Float, Index
 from sqlalchemy.orm import relationship
 

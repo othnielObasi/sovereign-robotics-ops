@@ -1,3 +1,10 @@
+/**
+ * ScoreCard — radar chart + chain-of-trust integrity badge for a run.
+ *
+ * Displays five normalised (0–1) scores as a filled SVG radar polygon
+ * and fetches hash-chain integrity verification from the backend.
+ */
+
 "use client";
 
 import React, { useEffect, useState } from "react";
@@ -20,12 +27,15 @@ const DIM_COLORS: Record<string, string> = {
 };
 
 function RadarChart({ scores }: { scores: Record<string, number> }) {
+  // Centre point, radius, and angular step for the regular polygon.
   const cx = 90, cy = 90, r = 70;
   const n = DIMS.length;
-  const angleStep = (2 * Math.PI) / n;
+  const angleStep = (2 * Math.PI) / n;  // each dimension is equally spaced
 
+  // Convert each score to polar coordinates for the data polygon
+  // and compute label positions just outside the chart.
   const points = DIMS.map((dim, i) => {
-    const angle = -Math.PI / 2 + i * angleStep;
+    const angle = -Math.PI / 2 + i * angleStep;  // start at 12-o'clock
     const val = scores[dim] ?? 0;
     return {
       x: cx + r * val * Math.cos(angle),

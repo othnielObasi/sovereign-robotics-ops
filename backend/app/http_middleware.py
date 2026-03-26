@@ -1,5 +1,17 @@
 from __future__ import annotations
 
+"""HTTP middleware stack for the SRO backend.
+
+Provides two middleware classes:
+
+- **SecurityHeadersMiddleware** — injects OWASP-recommended security headers
+  (X-Content-Type-Options, X-Frame-Options, HSTS in production, CSP).
+- **RateLimitMiddleware** — sliding-window in-memory rate limiter that
+  tracks requests per client IP.  Exempt paths: ``/health``, docs, OPTIONS.
+
+Both are registered in ``main.py`` during app startup.
+"""
+
 import math
 import time
 from collections import defaultdict, deque
@@ -40,6 +52,13 @@ class RateLimitDecision:
 
 
 class InMemoryRateLimiter:
+    """Sliding-window rate limiter backed by an in-memory deque per client.
+
+    Each request appends a monotonic timestamp to the client's bucket.
+    Old entries (outside the window) are pruned on every check.  If the
+    bucket is full, the request is rejected with a ``Retry-After`` hint.
+    Thread-safe via a global :class:`threading.Lock`.
+    """
     def __init__(self) -> None:
         self._buckets: DefaultDict[str, Deque[float]] = defaultdict(deque)
         self._lock = Lock()
@@ -67,6 +86,11 @@ class InMemoryRateLimiter:
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Inject OWASP-recommended security headers on every response.
+
+    In production, also adds HSTS.  CSP is omitted on doc paths so
+    Swagger UI / ReDoc can load their own scripts.
+    """
     async def dispatch(self, request: Request, call_next):
         response = await call_next(request)
 
@@ -94,6 +118,11 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
+    """ASGI middleware enforcing per-IP rate limits.
+
+    Exempt paths: ``/health``, ``/docs``, ``/redoc``, ``/openapi.json``,
+    ``OPTIONS`` pre-flight, and the root ``/``.
+    """
     def __init__(self, app, limiter: InMemoryRateLimiter):
         super().__init__(app)
         self._limiter = limiter
