@@ -1,0 +1,586 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SRO — Build &amp; Deploy Demo</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --panel: #161b22;
+    --border: #30363d;
+    --text: #c9d1d9;
+    --dim: #6e7681;
+    --green: #3fb950;
+    --cyan: #58a6ff;
+    --yellow: #d29922;
+    --red: #f85149;
+    --purple: #bc8cff;
+    --orange: #d18616;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 24px 16px;
+  }
+  h1 {
+    font-size: 1.6rem;
+    font-weight: 600;
+    margin-bottom: 4px;
+    color: #fff;
+  }
+  .subtitle {
+    color: var(--dim);
+    font-size: 0.9rem;
+    margin-bottom: 20px;
+  }
+  /* Progress bar */
+  .progress-bar {
+    width: 100%;
+    max-width: 900px;
+    display: flex;
+    gap: 4px;
+    margin-bottom: 20px;
+  }
+  .progress-step {
+    flex: 1;
+    height: 4px;
+    background: var(--border);
+    border-radius: 2px;
+    transition: background 0.4s;
+    position: relative;
+  }
+  .progress-step.active { background: var(--cyan); }
+  .progress-step.done { background: var(--green); }
+  .progress-label {
+    position: absolute;
+    top: 8px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 0.65rem;
+    color: var(--dim);
+    white-space: nowrap;
+    transition: color 0.3s;
+  }
+  .progress-step.active .progress-label,
+  .progress-step.done .progress-label { color: var(--text); }
+
+  /* Terminal */
+  .terminal {
+    width: 100%;
+    max-width: 900px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    flex: 1;
+  }
+  .terminal-header {
+    background: var(--border);
+    padding: 8px 14px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .dot { width: 12px; height: 12px; border-radius: 50%; }
+  .dot-red { background: var(--red); }
+  .dot-yellow { background: var(--yellow); }
+  .dot-green { background: var(--green); }
+  .terminal-title {
+    flex: 1;
+    text-align: center;
+    color: var(--dim);
+    font-size: 0.8rem;
+  }
+  .terminal-body {
+    padding: 16px;
+    font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', Consolas, monospace;
+    font-size: 0.85rem;
+    line-height: 1.6;
+    min-height: 420px;
+    max-height: 520px;
+    overflow-y: auto;
+    scroll-behavior: smooth;
+  }
+  .line { white-space: pre-wrap; word-break: break-all; }
+  .cmd { color: var(--green); }
+  .cmd::before { content: '$ '; color: var(--cyan); }
+  .comment { color: var(--dim); font-style: italic; }
+  .banner { color: var(--cyan); font-weight: bold; }
+  .ok { color: var(--green); }
+  .warn { color: var(--yellow); }
+  .err { color: var(--red); }
+  .highlight { color: var(--purple); }
+  .info { color: var(--text); }
+  .file { color: var(--orange); }
+  .cursor {
+    display: inline-block;
+    width: 8px;
+    height: 1.1em;
+    background: var(--green);
+    vertical-align: text-bottom;
+    animation: blink 1s step-end infinite;
+  }
+  @keyframes blink {
+    50% { opacity: 0; }
+  }
+
+  /* Controls */
+  .controls {
+    width: 100%;
+    max-width: 900px;
+    margin-top: 16px;
+    display: flex;
+    justify-content: center;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  button {
+    background: var(--panel);
+    color: var(--text);
+    border: 1px solid var(--border);
+    padding: 8px 20px;
+    border-radius: 6px;
+    font-size: 0.85rem;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  button:hover { background: var(--border); color: #fff; }
+  button:disabled { opacity: 0.4; cursor: default; }
+  button.primary { background: var(--cyan); color: var(--bg); border-color: var(--cyan); font-weight: 600; }
+  button.primary:hover { opacity: 0.85; }
+  .speed-label { color: var(--dim); font-size: 0.8rem; align-self: center; }
+
+  /* Architecture diagram */
+  .arch-box {
+    display: inline-block;
+    border: 1px solid var(--border);
+    padding: 2px 8px;
+    border-radius: 4px;
+    margin: 1px;
+  }
+
+  /* Footer */
+  .footer {
+    margin-top: 20px;
+    color: var(--dim);
+    font-size: 0.75rem;
+    text-align: center;
+  }
+  .footer a { color: var(--cyan); text-decoration: none; }
+</style>
+</head>
+<body>
+
+<h1>Sovereign Robotics Ops</h1>
+<p class="subtitle">Build &amp; Deploy — Animated Walkthrough</p>
+
+<div class="progress-bar" id="progressBar"></div>
+
+<div class="terminal">
+  <div class="terminal-header">
+    <span class="dot dot-red"></span>
+    <span class="dot dot-yellow"></span>
+    <span class="dot dot-green"></span>
+    <span class="terminal-title" id="termTitle">sro — build demo</span>
+  </div>
+  <div class="terminal-body" id="termBody"></div>
+</div>
+
+<div class="controls">
+  <button id="btnPrev" onclick="prevStep()">&#9664; Prev</button>
+  <button id="btnPlay" class="primary" onclick="togglePlay()">&#9654; Play</button>
+  <button id="btnNext" onclick="nextStep()">Next &#9654;</button>
+  <span class="speed-label">Speed:</span>
+  <button onclick="setSpeed(0.5)">0.5x</button>
+  <button onclick="setSpeed(1)" id="btnSpeed1" style="border-color:var(--cyan)">1x</button>
+  <button onclick="setSpeed(2)">2x</button>
+  <button onclick="setSpeed(4)">4x</button>
+</div>
+
+<div class="footer">
+  Sovereign Robotics Ops &mdash;
+  <a href="https://github.com/othnielObasi/sovereign-robotics-ops" target="_blank">GitHub</a>
+</div>
+
+<script>
+// ── Step definitions ─────────────────────────────────────────────
+const STEPS = [
+  {
+    title: "Architecture Overview",
+    label: "Arch",
+    lines: [
+      { type: "banner", text: "━━━  1 / 8  —  Architecture Overview  ━━━" },
+      { type: "comment", text: "# Three-service stack with PostgreSQL" },
+      { type: "info", text: "" },
+      { type: "info", text: "  ┌────────────┐      ┌────────────┐      ┌────────────┐" },
+      { type: "info", text: "  │  Frontend   │ ───▶ │  Backend   │ ───▶ │ Simulator  │" },
+      { type: "info", text: "  │  Next.js 14 │      │  FastAPI   │      │  FastAPI    │" },
+      { type: "info", text: "  │  :3000      │      │  :8080     │      │  :8090      │" },
+      { type: "info", text: "  └────────────┘      └─────┬──────┘      └────────────┘" },
+      { type: "info", text: "                            │" },
+      { type: "info", text: "                      ┌─────▼──────┐" },
+      { type: "info", text: "                      │ PostgreSQL │" },
+      { type: "info", text: "                      │  :5432     │" },
+      { type: "info", text: "                      └────────────┘" },
+      { type: "info", text: "" },
+      { type: "highlight", text: "  Frontend   → Next.js 14, React 18, TypeScript, Tailwind" },
+      { type: "highlight", text: "  Backend    → FastAPI, Python 3.11, SQLAlchemy, Alembic" },
+      { type: "highlight", text: "  Simulator  → FastAPI mock robot (telemetry + commands)" },
+      { type: "highlight", text: "  Database   → PostgreSQL 16 (prod) / SQLite (dev)" },
+    ]
+  },
+  {
+    title: "Project Structure",
+    label: "Structure",
+    lines: [
+      { type: "banner", text: "━━━  2 / 8  —  Project Structure  ━━━" },
+      { type: "cmd", text: "tree -L 2 --dirsfirst" },
+      { type: "file", text: "." },
+      { type: "file", text: "├── backend/" },
+      { type: "info", text: "│   ├── alembic/          # DB migrations (9 versions)" },
+      { type: "info", text: "│   ├── app/              # FastAPI application" },
+      { type: "info", text: "│   ├── tests/            # pytest suite (94 tests)" },
+      { type: "info", text: "│   ├── Dockerfile        # Multi-stage prod build" },
+      { type: "info", text: "│   └── pyproject.toml    # Python deps" },
+      { type: "file", text: "├── frontend/" },
+      { type: "info", text: "│   ├── src/              # Next.js pages + components" },
+      { type: "info", text: "│   ├── Dockerfile        # Dev image" },
+      { type: "info", text: "│   ├── Dockerfile.prod   # Multi-stage production" },
+      { type: "info", text: "│   └── package.json      # Node deps" },
+      { type: "file", text: "├── sim/mock_sim/" },
+      { type: "info", text: "│   ├── server.py         # Simulator (FastAPI)" },
+      { type: "info", text: "│   ├── world.json        # Warehouse layout" },
+      { type: "info", text: "│   └── Dockerfile" },
+      { type: "file", text: "├── deploy/" },
+      { type: "info", text: "│   └── vultr-deploy.sh   # Production provisioning" },
+      { type: "file", text: "├── .github/workflows/    # 5 CI/CD pipelines" },
+      { type: "file", text: "├── docker-compose.yml           # Local dev" },
+      { type: "file", text: "├── docker-compose.vultr.yml     # Production (Vultr)" },
+      { type: "file", text: "├── Dockerfile.fly               # Fly.io monolith" },
+      { type: "file", text: "└── docs/                        # Documentation" },
+    ]
+  },
+  {
+    title: "Environment Setup",
+    label: "Env",
+    lines: [
+      { type: "banner", text: "━━━  3 / 8  —  Environment Setup  ━━━" },
+      { type: "cmd", text: "cp .env.example .env" },
+      { type: "comment", text: "# Key environment variables:" },
+      { type: "info", text: "" },
+      { type: "highlight", text: "  DATABASE_URL        postgresql://sro:***@db:5432/sro" },
+      { type: "highlight", text: "  JWT_SECRET          (auto-generated in dev)" },
+      { type: "highlight", text: "  SIM_TOKEN           (auto-generated in dev)" },
+      { type: "highlight", text: "  POSTGRES_PASSWORD   (required for Docker Compose)" },
+      { type: "info", text: "" },
+      { type: "comment", text: "# Optional — LLM features:" },
+      { type: "info", text: "  GEMINI_API_KEY      (Google AI key)" },
+      { type: "info", text: "  GEMINI_PROJECT_ID   (GCP project)" },
+      { type: "info", text: "  GEMINI_ENABLED      false → true" },
+      { type: "info", text: "" },
+      { type: "warn", text: "  ⚠  In production (ENVIRONMENT=production)," },
+      { type: "warn", text: "     JWT_SECRET and SIM_TOKEN must be set explicitly" },
+      { type: "warn", text: "     or the backend will refuse to start." },
+    ]
+  },
+  {
+    title: "Docker Build",
+    label: "Build",
+    lines: [
+      { type: "banner", text: "━━━  4 / 8  —  Docker Build  ━━━" },
+      { type: "cmd", text: "docker compose build" },
+      { type: "info", text: "" },
+      { type: "comment", text: "# Building backend (multi-stage, Python 3.11-slim)..." },
+      { type: "info", text: "  [builder] pip install --no-cache-dir .[postgres]" },
+      { type: "info", text: "  [runtime] COPY packages from builder" },
+      { type: "info", text: "  [runtime] USER sro (non-root)" },
+      { type: "ok", text: "  ✔ sovereign-robotics-ops-backend   253 MB" },
+      { type: "info", text: "" },
+      { type: "comment", text: "# Building frontend (Node 20 Alpine)..." },
+      { type: "info", text: "  npm install → copy source" },
+      { type: "ok", text: "  ✔ sovereign-robotics-ops-frontend  704 MB" },
+      { type: "info", text: "" },
+      { type: "comment", text: "# Building simulator (Python 3.11-slim)..." },
+      { type: "info", text: "  pip install fastapi uvicorn pydantic" },
+      { type: "info", text: "  USER sim (non-root)" },
+      { type: "ok", text: "  ✔ sovereign-robotics-ops-mock-sim  171 MB" },
+      { type: "info", text: "" },
+      { type: "ok", text: "  All 3 images built successfully." },
+    ]
+  },
+  {
+    title: "Start the Stack",
+    label: "Launch",
+    lines: [
+      { type: "banner", text: "━━━  5 / 8  —  Start the Stack  ━━━" },
+      { type: "cmd", text: "docker compose up -d" },
+      { type: "info", text: "" },
+      { type: "ok", text: "  ✔ Network sovereign-robotics-ops_default     Created" },
+      { type: "ok", text: "  ✔ Container sro-postgres-1                   Started" },
+      { type: "ok", text: "  ✔ Container sro-mock-sim-1                   Started" },
+      { type: "ok", text: "  ✔ Container sro-backend-1                    Started" },
+      { type: "ok", text: "  ✔ Container sro-frontend-1                   Started" },
+      { type: "info", text: "" },
+      { type: "comment", text: "# Backend runs Alembic migrations on startup automatically" },
+      { type: "info", text: "  preflight: creating data directory..." },
+      { type: "info", text: "  preflight: running migrations (attempt 1/5)..." },
+      { type: "ok", text: "  preflight: migrations complete." },
+      { type: "info", text: "  INFO:     Uvicorn running on http://0.0.0.0:8080" },
+      { type: "info", text: "" },
+      { type: "cmd", text: "docker compose ps" },
+      { type: "ok", text: "  postgres   Up (healthy)   5432/tcp" },
+      { type: "ok", text: "  mock-sim   Up (healthy)   8090/tcp" },
+      { type: "ok", text: "  backend    Up (healthy)   8080/tcp" },
+      { type: "ok", text: "  frontend   Up             3000/tcp" },
+    ]
+  },
+  {
+    title: "Verify Services",
+    label: "Verify",
+    lines: [
+      { type: "banner", text: "━━━  6 / 8  —  Verify Services  ━━━" },
+      { type: "info", text: "" },
+      { type: "cmd", text: "curl http://localhost:8080/health" },
+      { type: "ok", text: '  {' },
+      { type: "ok", text: '    "status": "ok",' },
+      { type: "ok", text: '    "environment": "development",' },
+      { type: "ok", text: '    "version": "0.1.0",' },
+      { type: "ok", text: '    "checks": {' },
+      { type: "ok", text: '      "database": "ok",' },
+      { type: "ok", text: '      "simulator": "ok"' },
+      { type: "ok", text: '    }' },
+      { type: "ok", text: '  }' },
+      { type: "info", text: "" },
+      { type: "cmd", text: "curl http://localhost:8090/health" },
+      { type: "ok", text: '  {"status":"ok"}' },
+      { type: "info", text: "" },
+      { type: "cmd", text: "curl -o /dev/null -w '%{http_code}' http://localhost:3000/" },
+      { type: "ok", text: "  200 OK" },
+      { type: "info", text: "" },
+      { type: "ok", text: "  Dashboard:  http://localhost:3000" },
+      { type: "ok", text: "  API Docs:   http://localhost:8080/docs" },
+      { type: "ok", text: "  Swagger:    http://localhost:8080/redoc" },
+    ]
+  },
+  {
+    title: "Tests",
+    label: "Tests",
+    lines: [
+      { type: "banner", text: "━━━  7 / 8  —  Running Tests  ━━━" },
+      { type: "info", text: "" },
+      { type: "comment", text: "# Backend test suite" },
+      { type: "cmd", text: "cd backend && pytest -q" },
+      { type: "info", text: "  ........................................................................ [76%]" },
+      { type: "info", text: "  ......................                                                 [100%]" },
+      { type: "ok", text: "  94 passed in 3.40s" },
+      { type: "info", text: "" },
+      { type: "comment", text: "# Test coverage:" },
+      { type: "info", text: "  test_api_smoke.py        API endpoint smoke tests" },
+      { type: "info", text: "  test_governance.py       Governance engine logic" },
+      { type: "info", text: "  test_plan_execution.py   Plan execution pipeline" },
+      { type: "info", text: "  test_reward_hacking.py   Adversarial scenarios" },
+      { type: "info", text: "  test_phase_abc.py        Phase A/B/C features" },
+      { type: "info", text: "  test_phase_d.py          Phase D features" },
+      { type: "info", text: "" },
+      { type: "comment", text: "# Frontend build verification" },
+      { type: "cmd", text: "cd frontend && npm run build" },
+      { type: "ok", text: "  ✔ Compiled successfully" },
+      { type: "info", text: "  ○ /              1.87 kB    95.2 kB" },
+      { type: "info", text: "  ○ /missions      2.53 kB   102 kB" },
+      { type: "info", text: "  ○ /runs          1.64 kB   101 kB" },
+      { type: "info", text: "  ○ /compliance    2.73 kB   102 kB" },
+      { type: "info", text: "  ○ /policies      3.37 kB    93.7 kB" },
+    ]
+  },
+  {
+    title: "Production & CI/CD",
+    label: "Prod",
+    lines: [
+      { type: "banner", text: "━━━  8 / 8  —  Production & CI/CD  ━━━" },
+      { type: "info", text: "" },
+      { type: "comment", text: "# Production target: Vultr VM (2 vCPU, 4 GB RAM)" },
+      { type: "comment", text: "# docker-compose.vultr.yml highlights:" },
+      { type: "info", text: "" },
+      { type: "highlight", text: "  Networks       frontend_net ←→ backend_net (isolated)" },
+      { type: "highlight", text: "  Ports          All bound to 127.0.0.1 (Nginx only)" },
+      { type: "highlight", text: "  TLS            Certbot auto-renew (Let's Encrypt)" },
+      { type: "highlight", text: "  Healthchecks   All 4 services, with retries" },
+      { type: "highlight", text: "  Backups        Daily Postgres dump, 7-day retention" },
+      { type: "info", text: "" },
+      { type: "comment", text: "# Container resource limits:" },
+      { type: "info", text: "  Frontend    0.5 CPU   512 MB" },
+      { type: "info", text: "  Backend     1.0 CPU   1.5 GB" },
+      { type: "info", text: "  PostgreSQL  1.0 CPU   1.0 GB" },
+      { type: "info", text: "  Simulator   0.5 CPU   256 MB" },
+      { type: "warn", text: "  Total       3.0 CPU   3.25 GB" },
+      { type: "info", text: "" },
+      { type: "comment", text: "# CI/CD — GitHub Actions (push to main):" },
+      { type: "ok", text: "  ci.yml                  → tests + Docker build" },
+      { type: "ok", text: "  deploy.yml              → Fly.io + Vercel" },
+      { type: "ok", text: "  provision_vultr_env.yml → SSH deploy to Vultr" },
+      { type: "info", text: "" },
+      { type: "banner", text: "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" },
+      { type: "ok", text: "  ✔ 94 backend tests passed" },
+      { type: "ok", text: "  ✔ Frontend production build clean" },
+      { type: "ok", text: "  ✔ 3 Docker images built" },
+      { type: "ok", text: "  ✔ All services healthy" },
+      { type: "banner", text: "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" },
+    ]
+  },
+];
+
+// ── State ────────────────────────────────────────────────────────
+let currentStep = 0;
+let lineIndex = 0;
+let playing = false;
+let speed = 1;
+let timer = null;
+
+const body = document.getElementById("termBody");
+const bar = document.getElementById("progressBar");
+const title = document.getElementById("termTitle");
+
+// Build progress bar
+STEPS.forEach((s, i) => {
+  const el = document.createElement("div");
+  el.className = "progress-step";
+  el.innerHTML = `<span class="progress-label">${s.label}</span>`;
+  el.onclick = () => goToStep(i);
+  el.style.cursor = "pointer";
+  bar.appendChild(el);
+});
+
+function updateProgress() {
+  bar.querySelectorAll(".progress-step").forEach((el, i) => {
+    el.classList.remove("active", "done");
+    if (i < currentStep) el.classList.add("done");
+    else if (i === currentStep) el.classList.add("active");
+  });
+}
+
+function lineDelay(line) {
+  const base = line.type === "cmd" ? 600 : line.type === "banner" ? 400 : 120;
+  return base / speed;
+}
+
+function renderLine(line) {
+  const div = document.createElement("div");
+  div.className = `line ${line.type}`;
+  if (line.type === "cmd") {
+    div.classList.add("cmd");
+  }
+  div.textContent = line.text;
+  return div;
+}
+
+function showStep(stepIdx, animate) {
+  currentStep = stepIdx;
+  lineIndex = 0;
+  body.innerHTML = "";
+  title.textContent = `sro — ${STEPS[stepIdx].title}`;
+  updateProgress();
+
+  if (animate) {
+    typeNextLine();
+  } else {
+    // Show all lines immediately
+    STEPS[stepIdx].lines.forEach(l => body.appendChild(renderLine(l)));
+    addCursor();
+    scrollToBottom();
+  }
+}
+
+function addCursor() {
+  // Remove old cursor
+  const old = body.querySelector(".cursor");
+  if (old) old.remove();
+  const c = document.createElement("span");
+  c.className = "cursor";
+  body.appendChild(c);
+}
+
+function scrollToBottom() {
+  body.scrollTop = body.scrollHeight;
+}
+
+function typeNextLine() {
+  clearTimeout(timer);
+  const step = STEPS[currentStep];
+  if (lineIndex >= step.lines.length) {
+    addCursor();
+    // Auto-advance if playing
+    if (playing && currentStep < STEPS.length - 1) {
+      timer = setTimeout(() => nextStep(), 1500 / speed);
+    } else if (playing && currentStep >= STEPS.length - 1) {
+      playing = false;
+      updatePlayBtn();
+    }
+    return;
+  }
+
+  const line = step.lines[lineIndex];
+  body.appendChild(renderLine(line));
+  scrollToBottom();
+  lineIndex++;
+  timer = setTimeout(typeNextLine, lineDelay(line));
+}
+
+function goToStep(idx) {
+  if (idx < 0 || idx >= STEPS.length) return;
+  clearTimeout(timer);
+  showStep(idx, playing);
+  if (!playing) showStep(idx, false); // show instantly if paused
+}
+
+function nextStep() {
+  if (currentStep < STEPS.length - 1) {
+    goToStep(currentStep + 1);
+  }
+}
+
+function prevStep() {
+  if (currentStep > 0) {
+    goToStep(currentStep - 1);
+  }
+}
+
+function togglePlay() {
+  playing = !playing;
+  updatePlayBtn();
+  if (playing) {
+    showStep(currentStep, true);
+  } else {
+    clearTimeout(timer);
+    // Show remaining lines instantly
+    const step = STEPS[currentStep];
+    while (lineIndex < step.lines.length) {
+      body.appendChild(renderLine(step.lines[lineIndex]));
+      lineIndex++;
+    }
+    addCursor();
+    scrollToBottom();
+  }
+}
+
+function updatePlayBtn() {
+  document.getElementById("btnPlay").innerHTML = playing ? "&#10074;&#10074; Pause" : "&#9654; Play";
+}
+
+function setSpeed(s) {
+  speed = s;
+  document.querySelectorAll(".controls button").forEach(b => b.style.borderColor = "");
+  event.target.style.borderColor = "var(--cyan)";
+}
+
+// ── Init ─────────────────────────────────────────────────────────
+showStep(0, false);
+</script>
+</body>
+</html>
