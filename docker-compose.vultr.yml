@@ -58,10 +58,10 @@ services:
     restart: always
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health', timeout=10)"]
-      interval: 30s
-      timeout: 15s
-      retries: 5
-      start_period: 60s
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 90s
     networks:
       - frontend_net
       - backend_net

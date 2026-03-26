@@ -49,5 +49,6 @@ async def health():
     if sim_error:
         payload["checks"]["simulator_detail"] = sim_error
 
-    status_code = 200 if db_ok and sim_ok else 503
-    return JSONResponse(status_code=status_code, content=payload)
+    # Return 200 as long as the backend is alive — dependency failures
+    # are reported in the payload but should NOT cause container restarts.
+    return JSONResponse(status_code=200, content=payload)
