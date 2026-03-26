@@ -29,8 +29,11 @@ async def health():
         logger.warning("Health DB check failed: %s", exc)
 
     try:
-        async with httpx.AsyncClient(timeout=3.0) as client:
-            r = await client.get(f"{settings.sim_base_url.rstrip('/')}/telemetry")
+        headers = {}
+        if getattr(settings, "sim_token", ""):
+            headers["X-Sim-Token"] = settings.sim_token
+        async with httpx.AsyncClient(timeout=3.0, headers=headers) as client:
+            r = await client.get(f"{settings.sim_base_url.rstrip('/')}/health")
             sim_ok = r.status_code == 200
     except Exception as exc:
         sim_error = str(exc)
