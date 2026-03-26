@@ -15,7 +15,8 @@ from app.utils.ids import new_id
 from app.utils.time import utc_now
 
 
-class MissionService:    """Manages mission CRUD, goal normalisation, and audit logging.
+class MissionService:
+    """Manages mission CRUD, goal normalisation, and audit logging.
 
     A *mission* represents a high-level objective (e.g. "deliver to Bay C3").
     The service handles:
@@ -24,7 +25,9 @@ class MissionService:    """Manages mission CRUD, goal normalisation, and audit 
     - Normalising goal coordinates: clamping to geofence, snapping to
       the nearest bay, and resolving bay names from natural-language titles.
     - Recording every mutation in the immutable ``mission_audit`` table.
-    """    # ── helpers ──────────────────────────────────────────────
+    """
+
+    # ── helpers ──────────────────────────────────────────────
 
     def _audit(
         self,
