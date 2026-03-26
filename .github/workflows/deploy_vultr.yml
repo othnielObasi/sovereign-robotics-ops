@@ -10,7 +10,7 @@ on:
       plan:
         description: 'Vultr plan (slug)'
         required: false
-        default: 'vc2-1c-1gb'
+        default: 'vc2-2c-4gb'
       image:
         description: 'Image slug (example: ubuntu-24-04-x64)'
         required: false

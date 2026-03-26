@@ -10,9 +10,9 @@ on:
         required: false
         default: 'ewr'
       plan:
-        description: 'Vultr plan (e.g. vc2-1c-2gb)'
+        description: 'Vultr plan (e.g. vc2-2c-4gb)'
         required: false
-        default: 'vc2-1c-2gb'
+        default: 'vc2-2c-4gb'
       image:
         description: 'Image slug (e.g. ubuntu-24-04-x64)'
         required: false
