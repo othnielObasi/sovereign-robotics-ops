@@ -672,10 +672,10 @@ export default function RunPage({ params }: { params: { runId: string } }) {
       </div>
 
       {/* ── MAIN LAYOUT: Hero Map (left 60%) + Sidebar (right 40%) ── */}
-      <div ref={fullscreenGridRef} className={`grid grid-cols-1 gap-3 [&:fullscreen]:bg-slate-900 [&:fullscreen]:p-4 [&:fullscreen]:overflow-y-auto ${isFullscreen ? "lg:grid-cols-10" : "lg:grid-cols-5"}`}>
+      <div ref={fullscreenGridRef} className={`grid grid-cols-1 gap-3 [&:fullscreen]:bg-slate-900 [&:fullscreen]:p-4 [&:fullscreen]:overflow-y-auto ${isFullscreen ? "lg:grid-cols-12" : "lg:grid-cols-5"}`}>
 
         {/* ── LEFT: Hero Map ── */}
-        <div className={`${isFullscreen ? "lg:col-span-7" : "lg:col-span-3"} space-y-3`}>
+        <div className={`${isFullscreen ? "lg:col-span-5" : "lg:col-span-3"} space-y-3`}>
           <Card title="Warehouse Simulation">
             <div className="flex items-center justify-between mb-2">
               <div className="flex items-center gap-3">
@@ -736,6 +736,7 @@ export default function RunPage({ params }: { params: { runId: string } }) {
           </Card>
 
           {/* ── Unified AI Mission Planner ── */}
+          {!isFullscreen && (
           <Card title="🤖 AI Mission Planner">
             {/* Pipeline stage strip */}
             <div className="flex items-center gap-2 mb-3">
@@ -1315,7 +1316,136 @@ export default function RunPage({ params }: { params: { runId: string } }) {
               </button>
             )}
           </Card>
+          )}
         </div>
+
+        {/* ── CENTER: AI Planner (fullscreen only) ── */}
+        {isFullscreen && (
+        <div className="lg:col-span-4 space-y-3 lg:sticky lg:top-0 lg:self-start lg:max-h-screen lg:overflow-y-auto dash-scroll">
+          <Card title="🤖 AI Mission Planner">
+            {/* Compact pipeline strip */}
+            <div className="flex items-center gap-1 mb-2">
+              {([
+                { key: "idle", label: "Idle" },
+                { key: "planning", label: "Plan" },
+                { key: "governing", label: "Gov" },
+                { key: "executing", label: "Exec" },
+                { key: "done", label: "Done" },
+              ] as const).map((st) => (
+                <div key={st.key} className={`text-[9px] px-1.5 py-0.5 rounded-full border ${pipelineStage === st.key || (st.key === "planning" && pipelineStage === "reasoning") || (st.key === "executing" && pipelineStage === "ready") ? "bg-purple-500 text-white border-purple-600" : "bg-slate-800 text-slate-500 border-slate-700"}`}>
+                  {st.label}
+                </div>
+              ))}
+            </div>
+
+            {/* Auto-pilot status */}
+            {isBackendAutoPilot && (
+              <div className="flex items-center gap-1.5 bg-cyan-500/10 border border-cyan-500/30 rounded p-2 mb-2">
+                <span className="text-[10px]">{currentStatus === "planning" ? "🗺️" : "🚀"}</span>
+                <span className="text-[10px] text-cyan-300 font-semibold">
+                  {currentStatus === "planning" ? "AI generating plan…" : "Running autonomously"}
+                </span>
+              </div>
+            )}
+
+            {/* Reasoning summary */}
+            {agenticResult && (
+              <div className="space-y-1.5 mb-2">
+                <div className="text-[9px] uppercase tracking-wide text-slate-500 font-semibold">Reasoning</div>
+                <div className="bg-slate-900/60 border border-purple-500/20 rounded p-2 space-y-1 text-[10px] font-mono">
+                  <div className="flex items-start gap-1">
+                    <span className="text-purple-400 font-bold min-w-[50px]">Goal:</span>
+                    <span className="text-white truncate">{missionInstruction || "—"}</span>
+                  </div>
+                  <div className="flex items-start gap-1">
+                    <span className="text-emerald-400 font-bold min-w-[50px]">Strategy:</span>
+                    <div className="text-slate-300">
+                      {(agenticResult.thought_chain || []).filter((s: any) => s.thought && s.action !== "replan").slice(0, 2).map((s: any, i: number) => (
+                        <div key={i} className="truncate">- {s.thought}</div>
+                      ))}
+                    </div>
+                  </div>
+                  {/* Confidence + Risk bars */}
+                  <div className="flex items-center gap-1">
+                    <span className="text-yellow-400 font-bold min-w-[70px]">Confidence:</span>
+                    {(() => { const r = agenticResult.governance?.risk_score ?? 0; const c = Math.max(0, Math.min(1, (1-r)*0.92+0.04)); return <><span className={`font-bold ${c>0.7?"text-green-400":"text-yellow-400"}`}>{(c*100).toFixed(0)}%</span><div className="flex-1 h-1 bg-slate-700 rounded-full ml-1"><div className={`h-full rounded-full ${c>0.7?"bg-green-500":"bg-yellow-500"}`} style={{width:`${c*100}%`}}/></div></>; })()}
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <span className="text-red-400 font-bold min-w-[70px]">Gov Risk:</span>
+                    {(() => { const r = agenticResult.governance?.risk_score ?? 0; return <><span className={`font-bold ${r>0.5?"text-red-400":"text-green-400"}`}>{(r*100).toFixed(0)}%</span><div className="flex-1 h-1 bg-slate-700 rounded-full ml-1"><div className={`h-full rounded-full ${r>0.5?"bg-red-500":"bg-green-500"}`} style={{width:`${r*100}%`}}/></div></>; })()}
+                  </div>
+                </div>
+                {agenticResult.model_used && <div className="text-[9px] text-slate-600 font-mono">Model: {agenticResult.model_used}</div>}
+              </div>
+            )}
+
+            {/* Auto-pilot reasoning */}
+            {!agenticResult && llmPlan && (
+              <div className="space-y-1.5 mb-2">
+                <div className="text-[9px] uppercase tracking-wide text-slate-500 font-semibold">AI Reasoning</div>
+                <div className="bg-slate-900/60 border border-cyan-500/20 rounded p-2 space-y-1 text-[10px] font-mono">
+                  <div className="flex items-start gap-1">
+                    <span className="text-purple-400 font-bold min-w-[50px]">Goal:</span>
+                    <span className="text-white truncate">{missionInstruction || mission?.title || "—"}</span>
+                  </div>
+                  <div className="flex items-start gap-1">
+                    <span className="text-emerald-400 font-bold min-w-[50px]">Strategy:</span>
+                    <span className="text-slate-300 truncate">{llmPlan.rationale || "Direct path with obstacle avoidance"}</span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <span className="text-yellow-400 font-bold min-w-[70px]">Confidence:</span>
+                    {(() => { const r = lastDecision?.governance?.risk_score ?? 0.15; const c = Math.max(0, Math.min(1, (1-r)*0.92+0.04)); return <><span className={`font-bold ${c>0.7?"text-green-400":"text-yellow-400"}`}>{(c*100).toFixed(0)}%</span><div className="flex-1 h-1 bg-slate-700 rounded-full ml-1"><div className={`h-full rounded-full ${c>0.7?"bg-green-500":"bg-yellow-500"}`} style={{width:`${c*100}%`}}/></div></>; })()}
+                  </div>
+                </div>
+                {llmPlan.model && <div className="text-[9px] text-slate-600 font-mono">Model: {llmPlan.model}</div>}
+              </div>
+            )}
+
+            {/* Waypoint plan */}
+            {llmPlan && (
+              <div className="space-y-1.5 mb-2">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded-full border ${llmPlan.all_approved === false ? "bg-yellow-500/20 text-yellow-400 border-yellow-500/30" : "bg-green-500/20 text-green-400 border-green-500/30"}`}>
+                    {llmPlan.all_approved === true ? "All Approved" : llmPlan.all_approved === false ? "Flagged" : missionReview?.verdict === "APPROVED" ? "Sovereign Approved" : "Under Review"}
+                  </span>
+                  <span className="text-[9px] text-slate-500">{llmPlan.waypoints?.length || 0} waypoints</span>
+                </div>
+                <div className="flex flex-wrap gap-1">
+                  {(llmPlan.waypoints || []).map((wp: any, i: number) => {
+                    const gov = llmPlan.governance?.[i]; const ok = gov?.decision === "APPROVED";
+                    const isActive = activeWaypointIdx === i;
+                    const isCompleted = activeWaypointIdx > i;
+                    return (
+                      <span key={i} onMouseEnter={() => setHoveredWaypointIdx(i)} onMouseLeave={() => setHoveredWaypointIdx(null)}
+                        className={`text-[9px] px-1 py-0.5 rounded border ${isActive ? "border-cyan-400 bg-cyan-500/25 text-cyan-200 font-bold" : isCompleted ? "border-green-500/40 bg-green-500/15 text-green-400 line-through opacity-70" : ok ? "border-green-500/30 text-green-400" : "border-yellow-500/30 text-yellow-400"}`}>
+                        {isCompleted ? "✓" : isActive ? "▶" : `${i+1}:`} ({wp.x.toFixed(0)},{wp.y.toFixed(0)})
+                      </span>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Planning progress */}
+            {planningSteps.length > 0 && (currentStatus === "planning" || currentStatus === "running") && (
+              <div className="bg-slate-900/60 border border-slate-700 rounded p-2 mb-2 space-y-1">
+                <div className="text-[9px] uppercase tracking-wider text-slate-500 font-semibold">Progress</div>
+                {planningSteps.slice(-4).map((s, i) => {
+                  const icon = s.step === "llm_start" ? "🧠" : s.step === "llm_done" ? "✅" : s.step === "governance_start" ? "🛡️" : "•";
+                  return <div key={i} className="flex items-start gap-1 text-[9px] text-slate-400"><span>{icon}</span><span className="truncate">{s.message}</span></div>;
+                })}
+              </div>
+            )}
+
+            {/* Replan badge */}
+            {replanCount > 0 && (
+              <div className="text-[9px] text-amber-300 bg-amber-500/15 px-2 py-1 rounded-full border border-amber-500/30 inline-block mb-2">
+                🔄 Replans: {replanCount}{lastDenialPolicy ? ` — ${lastDenialPolicy}` : ""}
+              </div>
+            )}
+          </Card>
+        </div>
+        )}
 
         {/* ── RIGHT SIDEBAR ── */}
         <div className={`${isFullscreen ? "lg:col-span-3" : "lg:col-span-2"} space-y-3 lg:sticky lg:top-14 lg:self-start lg:max-h-[calc(100vh-4.5rem)] lg:overflow-y-auto dash-scroll`}>
@@ -1325,17 +1455,17 @@ export default function RunPage({ params }: { params: { runId: string } }) {
             {!lastDecision ? (
               <div className="text-slate-500 text-xs text-center py-3">⏳ Awaiting first decision…</div>
             ) : (
-              <div className={`space-y-2 text-xs rounded-lg p-3 -mx-1 ${
+              <div className={`space-y-2 ${isFullscreen ? "text-[10px]" : "text-xs"} rounded-lg ${isFullscreen ? "p-2 -mx-0.5" : "p-3 -mx-1"} ${
                 lastDecision.governance?.decision === "APPROVED" ? "animate-glow-green" :
                 lastDecision.governance?.decision === "DENIED" ? "animate-glow-red" :
                 lastDecision.governance?.decision === "NEEDS_REVIEW" ? "animate-glow-yellow" : ""
               }`}>
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <span className="text-lg">
+                    <span className={`text-lg`}>
                       {lastDecision.governance?.decision === "APPROVED" ? "✅" : lastDecision.governance?.decision === "DENIED" ? "❌" : "⚠️"}
                     </span>
-                    <span className={`font-bold text-lg ${
+                    <span className={`font-bold ${isFullscreen ? "text-sm" : "text-lg"} ${
                       lastDecision.governance?.decision === "APPROVED" ? "text-green-400" : lastDecision.governance?.decision === "DENIED" ? "text-red-400" : "text-yellow-400"
                     }`}>
                       {lastDecision.governance?.decision === "APPROVED" && lastDecision.proposal?.intent === "STOP"
@@ -1410,7 +1540,7 @@ export default function RunPage({ params }: { params: { runId: string } }) {
               <div className="text-slate-500 text-xs text-center py-2">📡 Waiting…</div>
             ) : (
               <div>
-                <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs mb-2">
+                <div className={`grid grid-cols-2 gap-x-4 gap-y-1 ${isFullscreen ? "text-[10px]" : "text-xs"} mb-2`}>
                   <div><span className="text-slate-500">x:</span> <span className="text-white font-mono">{(+telemetry.x).toFixed(1)}</span></div>
                   <div><span className="text-slate-500">y:</span> <span className="text-white font-mono">{(+telemetry.y).toFixed(1)}</span></div>
                   <div><span className="text-slate-500">heading:</span> <span className="text-white font-mono">{((+telemetry.theta || 0) * 180 / Math.PI).toFixed(0)}°</span></div>
@@ -1429,13 +1559,12 @@ export default function RunPage({ params }: { params: { runId: string } }) {
           </CollapsibleCard>
 
           {/* Chain-of-Trust Timeline (compact, icons) */}
-          {!isFullscreen && (
           <Card title="Chain-of-Trust">
             {events.length === 0 ? (
               <div className="text-slate-500 text-xs text-center py-2">🔗 No events yet.</div>
             ) : (
-              <div className="max-h-60 overflow-y-auto space-y-0.5 timeline-live-line">
-                {events.slice(-10).reverse().map((e) => {
+              <div className={`${isFullscreen ? "max-h-32" : "max-h-60"} overflow-y-auto space-y-0.5 timeline-live-line`}>
+                {events.slice(isFullscreen ? -5 : -10).reverse().map((e) => {
                   const icon = e.type === "DECISION" ? "🔵" : e.type === "TELEMETRY" ? "🟢" : "🟠";
                   return (
                     <details key={e.id} className="group">
@@ -1454,7 +1583,6 @@ export default function RunPage({ params }: { params: { runId: string } }) {
               </div>
             )}
           </Card>
-          )}
 
           {/* Alerts */}
           {!isFullscreen && (
