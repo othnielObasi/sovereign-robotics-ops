@@ -60,6 +60,7 @@ class RunService:
 
         # --- Plan state (keyed by run_id) ---
         self._plans: Dict[str, List[Dict[str, Any]]] = {}  # ordered waypoint queue
+        self._plans_lock = asyncio.Lock()  # protects concurrent reads/writes to _plans
 
         # --- Stagnation detection ---
         self._last_positions: Dict[str, tuple[float, float]] = {}  # last (x, y) per run
@@ -515,10 +516,11 @@ class RunService:
                     proposal: ActionProposal
                     nl_task = mission.title if mission else "Navigate to goal"
 
-                    plan_wps = self._plans.get(run_id)
-                    if plan_wps:
-                        # Use the first waypoint as the next action
-                        wp = plan_wps[0]
+                    # Snapshot plan under lock to avoid races with LLM plan upgrades
+                    async with self._plans_lock:
+                        plan_wps = self._plans.get(run_id)
+                        wp = plan_wps[0] if plan_wps else None
+                    if wp:
                         proposal = ActionProposal(
                             intent="MOVE_TO",
                             params={"x": float(wp.get("x")), "y": float(wp.get("y")), "max_speed": float(wp.get("max_speed", 0.5))},
@@ -635,13 +637,16 @@ class RunService:
                         })
 
                         # If we executed a planned waypoint, remove it from the plan
-                        if plan_wps:
-                            try:
-                                self._plans[run_id].pop(0)
-                                if not self._plans[run_id]:
-                                    self._plans.pop(run_id, None)
-                            except Exception:
-                                pass
+                        if wp:
+                            async with self._plans_lock:
+                                try:
+                                    cur = self._plans.get(run_id)
+                                    if cur:
+                                        cur.pop(0)
+                                        if not cur:
+                                            self._plans.pop(run_id, None)
+                                except Exception:
+                                    pass
                     else:
                         # Denied or NEEDS_REVIEW — increment waypoint denial counter
                         self._wp_denial_counts[run_id] = self._wp_denial_counts.get(run_id, 0) + 1
@@ -675,20 +680,23 @@ class RunService:
                                 self._pause_flags[run_id] = asyncio.Event()
                             self._pause_flags[run_id].set()
 
-                        elif denial_count >= self.REPLAN_DENIAL_THRESHOLD and plan_wps:
+                        elif denial_count >= self.REPLAN_DENIAL_THRESHOLD and wp:
                             # Trigger replanning: discard blocked waypoint and request new plan
-                            blocked_wp = plan_wps[0] if plan_wps else {}
+                            blocked_wp = wp
                             logger.warning(
                                 "Run %s: %d consecutive denials on waypoint %s — triggering replan",
                                 run_id, denial_count, blocked_wp,
                             )
                             # Remove the blocked waypoint
-                            try:
-                                self._plans[run_id].pop(0)
-                                if not self._plans[run_id]:
-                                    self._plans.pop(run_id, None)
-                            except Exception:
-                                pass
+                            async with self._plans_lock:
+                                try:
+                                    cur = self._plans.get(run_id)
+                                    if cur:
+                                        cur.pop(0)
+                                        if not cur:
+                                            self._plans.pop(run_id, None)
+                                except Exception:
+                                    pass
 
                             # Record replan event in chain-of-trust
                             replan_payload = {
@@ -711,7 +719,8 @@ class RunService:
                                 new_plan = await planner.generate_plan(telemetry, replan_instruction, goal)
                                 new_wps = new_plan.get("waypoints", [])
                                 if new_wps:
-                                    self._plans[run_id] = new_wps
+                                    async with self._plans_lock:
+                                        self._plans[run_id] = new_wps
                                     replan_payload["new_plan_waypoints"] = len(new_wps)
                                     logger.info("Run %s: replanned with %d new waypoints", run_id, len(new_wps))
                             except Exception as replan_err:

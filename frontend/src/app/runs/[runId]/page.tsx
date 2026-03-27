@@ -51,11 +51,13 @@ function CollapsibleCard({ title, children, className = "", defaultOpen = false,
 function StatusBadge({ status }: { status: string }) {
   const s = status.toLowerCase();
   const color = s === "running" ? "bg-green-500/20 text-green-400 border-green-500/30"
+    : s === "planning" ? "bg-purple-500/20 text-purple-400 border-purple-500/30"
     : s === "stopped" ? "bg-red-500/20 text-red-400 border-red-500/30"
+    : s === "completed" ? "bg-cyan-500/20 text-cyan-400 border-cyan-500/30"
     : "bg-slate-700 text-slate-400 border-slate-600";
   return (
     <span className={`text-xs font-medium px-3 py-1 rounded-full border ${color}`}>
-      {status || "—"}
+      {s === "planning" ? "🗺️ Planning…" : status || "—"}
     </span>
   );
 }
@@ -103,6 +105,8 @@ export default function RunPage({ params }: { params: { runId: string } }) {
   const [missionInstruction, setMissionInstruction] = useState("");
   const [pipelineStage, setPipelineStage] = useState<"idle" | "reasoning" | "planning" | "governing" | "ready" | "executing" | "done">("idle");
   const [missionError, setMissionError] = useState<string | null>(null);
+  // Live planning progress steps from backend (shown during auto-pilot)
+  const [planningSteps, setPlanningSteps] = useState<Array<{step: string; message: string; ts: number}>>([]);
   // Agentic reasoning results
   const [agenticResult, setAgenticResult] = useState<any>(null);
   // LLM plan results
@@ -157,21 +161,24 @@ export default function RunPage({ params }: { params: { runId: string } }) {
       const rows = await listEvents(runId);
       setEvents(rows);
 
-      // Auto-populate llmPlan from backend PLAN events if not already set by
-      // the manual "Plan →" pipeline.  This ensures the map shows the plan
-      // the robot is *actually* following from the moment the page loads.
-      if (!llmPlan) {
-        const planEvents = rows.filter((e: any) => e.type === "PLAN");
-        // Prefer the latest PLAN event (LLM upgrade over seed fallback)
-        for (let i = planEvents.length - 1; i >= 0; i--) {
-          const payload = typeof planEvents[i].payload === "string"
-            ? JSON.parse(planEvents[i].payload)
-            : planEvents[i].payload || {};
-          const plan = payload.plan;
-          if (plan?.waypoints?.length) {
+      // Auto-populate llmPlan from backend PLAN events.  Always prefer the
+      // latest LLM plan (source: "gemini") over a seed fallback so the map
+      // shows the plan the robot is *actually* following — even if a seed
+      // fallback was loaded first.
+      const planEvents = rows.filter((e: any) => e.type === "PLAN");
+      // Prefer the latest PLAN event (LLM upgrade over seed fallback)
+      for (let i = planEvents.length - 1; i >= 0; i--) {
+        const payload = typeof planEvents[i].payload === "string"
+          ? JSON.parse(planEvents[i].payload)
+          : planEvents[i].payload || {};
+        const plan = payload.plan;
+        const source = payload.source;
+        if (plan?.waypoints?.length) {
+          // Always accept an LLM plan; only accept a fallback if nothing set yet
+          if (source !== "fallback" || !llmPlan) {
             setLlmPlan(plan);
-            break;
           }
+          break;
         }
       }
     } catch (_) {}
@@ -182,6 +189,15 @@ export default function RunPage({ params }: { params: { runId: string } }) {
       try {
         const r = await getRun(runId);
         setRun(r);
+        // Sync pipeline stage with backend run status so the AI Planner
+        // panel reflects that the backend has already started planning/executing.
+        if (r?.status === "planning" && pipelineStage === "idle") {
+          setPipelineStage("planning");
+        } else if (r?.status === "running" && pipelineStage === "idle") {
+          setPipelineStage("executing");
+        } else if ((r?.status === "completed" || r?.status === "stopped") && pipelineStage === "idle") {
+          setPipelineStage("done");
+        }
         // Fetch the parent mission to pre-fill instruction & goal
         if (r?.mission_id) {
           try {
@@ -219,6 +235,17 @@ export default function RunPage({ params }: { params: { runId: string } }) {
         const msg: WsMessage = JSON.parse(ev.data);
         if (msg.kind === "telemetry") setTelemetry(msg.data);
         if (msg.kind === "alert") setAlerts((a) => [{ ts: Date.now(), ...msg.data }, ...a].slice(0, 20));
+        if (msg.kind === "planning_progress") {
+          // Live planning substep from backend — append to visible progress log
+          const d = msg.data as any;
+          setPlanningSteps((prev) => [...prev, { step: d.step, message: d.message, ts: Date.now() }]);
+          // Also advance pipelineStage based on substep
+          if (d.step === "llm_start") setPipelineStage("planning");
+          if (d.step === "governance_start") setPipelineStage("governing");
+          if (d.step === "governance_done") setPipelineStage("executing");
+          // If LLM plan came back, trigger event refresh so map picks it up
+          if (d.step === "llm_done") refreshEvents();
+        }
         if (msg.kind === "event") {
           refreshEvents();
           // Extract policy_state from governance decision
@@ -229,7 +256,19 @@ export default function RunPage({ params }: { params: { runId: string } }) {
           if (msg.data?.distance_to_goal !== undefined) setDistanceToGoalLive(msg.data.distance_to_goal);
           if (msg.data?.stagnant_cycles !== undefined) setStagnantCyclesLive(msg.data.stagnant_cycles || 0);
         }
-        if (msg.kind === "status") setStatus(msg.data.status);
+        if (msg.kind === "status") {
+          setStatus(msg.data.status);
+          // Sync AI Planner pipeline stage with backend status transitions
+          // so the UI doesn't show "idle" while the robot is already running.
+          const s = msg.data.status;
+          if (s === "planning") {
+            setPipelineStage((prev) => prev === "idle" ? "planning" : prev);
+          } else if (s === "running") {
+            setPipelineStage((prev) => (prev === "idle" || prev === "planning" || prev === "governing") ? "executing" : prev);
+          } else if (s === "completed" || s === "stopped" || s === "failed") {
+            setPipelineStage((prev) => prev === "executing" ? "done" : prev);
+          }
+        }
         if (msg.kind === "agent_reasoning") setLiveThoughtChain(msg.data?.steps || []);
         try { ws.send("ping"); } catch {}
       };
@@ -481,6 +520,11 @@ export default function RunPage({ params }: { params: { runId: string } }) {
 
   const currentStatus = status || run?.status || "—";
 
+  // True when the backend is auto-planning/executing (user did NOT trigger the
+  // manual "Plan →" pipeline).  Used to show an explanatory banner.
+  const isBackendAutoPilot = (currentStatus === "planning" || currentStatus === "running")
+    && !agenticResult && !llmExecResult;
+
   const safetyBannerCls: Record<string, string> = {
     OK: "bg-green-500/15 border-green-500/30 text-green-400",
     STOP: "bg-red-500/20 border-red-500/40 text-red-400",
@@ -546,8 +590,8 @@ export default function RunPage({ params }: { params: { runId: string } }) {
         {/* Mission Status */}
         <div className="flex flex-col items-center text-center">
           <span className="text-[9px] uppercase tracking-wider text-slate-500 font-semibold">Mission</span>
-          <span className={`text-xs font-bold ${currentStatus === "stopped" ? "text-red-400" : currentStatus === "paused" ? "text-yellow-400" : "text-green-400"}`}>
-            {currentStatus === "running" ? "Active" : currentStatus === "stopped" ? "Halted" : currentStatus === "paused" ? "Paused" : currentStatus === "completed" ? "Complete" : "Idle"}
+          <span className={`text-xs font-bold ${currentStatus === "stopped" ? "text-red-400" : currentStatus === "paused" ? "text-yellow-400" : currentStatus === "planning" ? "text-purple-400" : "text-green-400"}`}>
+            {currentStatus === "running" ? "Active" : currentStatus === "stopped" ? "Halted" : currentStatus === "paused" ? "Paused" : currentStatus === "completed" ? "Complete" : currentStatus === "planning" ? "Planning…" : "Idle"}
           </span>
         </div>
         {/* Current Action Verdict */}
@@ -713,11 +757,11 @@ export default function RunPage({ params }: { params: { runId: string } }) {
               {([
                 { key: "reasoning", label: "1. Reasoning", icon: "🧠" },
                 { key: "planning", label: "2. Plan", icon: "🗺️" },
-                { key: "ready", label: "3. Governance", icon: "🛡️" },
+                { key: "governing", label: "3. Governance", icon: "🛡️" },
                 { key: "executing", label: "4. Execute", icon: "🚀" },
                 { key: "done", label: "5. Audit", icon: "📋" },
               ] as const).map((stage, i) => {
-                const stageOrder = ["idle", "reasoning", "planning", "ready", "executing", "done"];
+                const stageOrder = ["idle", "reasoning", "planning", "governing", "ready", "executing", "done"];
                 const currentIdx = stageOrder.indexOf(pipelineStage);
                 const stageIdx = stageOrder.indexOf(stage.key);
                 const isActive = pipelineStage === stage.key;
@@ -758,7 +802,42 @@ export default function RunPage({ params }: { params: { runId: string } }) {
               );
             })()}
 
-            {/* Instruction input */}
+            {/* ── Auto-pilot banner: explain what's happening when backend drives the run ── */}
+            {isBackendAutoPilot && (
+              <div className="flex items-start gap-2 bg-cyan-500/10 border border-cyan-500/30 rounded-lg p-3 mb-3">
+                <span className="text-cyan-400 text-base mt-0.5">{currentStatus === "planning" ? "🗺️" : "🚀"}</span>
+                <div>
+                  <div className="text-sm font-semibold text-cyan-300">
+                    {currentStatus === "planning" ? "AI is generating a plan…" : "Mission running autonomously"}
+                  </div>
+                  <div className="text-[11px] text-slate-400 mt-0.5">
+                    {currentStatus === "planning"
+                      ? "The Gemini LLM is computing an optimal multi-waypoint plan. The robot will not move until planning and governance review complete."
+                      : "The robot is following the approved plan. Watch the map and chain-of-trust below for live progress."}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* ── Live planning progress log ── */}
+            {planningSteps.length > 0 && (currentStatus === "planning" || currentStatus === "running") && (
+              <div className="bg-slate-900/60 border border-slate-700 rounded-lg p-3 mb-3 space-y-1.5">
+                <div className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold mb-1">Planning Progress</div>
+                {planningSteps.map((s, i) => {
+                  const icon = s.step === "llm_start" ? "🧠" : s.step === "llm_done" ? "✅" : s.step === "llm_fallback" || s.step === "llm_skip" ? "⚡" : s.step === "governance_start" ? "🛡️" : s.step === "governance_done" ? "✅" : "•";
+                  const isLatest = i === planningSteps.length - 1;
+                  return (
+                    <div key={i} className={`flex items-start gap-2 text-[11px] ${isLatest ? "text-cyan-300" : "text-slate-500"}`}>
+                      <span className="mt-0.5 flex-shrink-0">{icon}</span>
+                      <span className={isLatest && (s.step === "llm_start" || s.step === "governance_start") ? "animate-pulse" : ""}>{s.message}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Instruction input + Plan button (hidden during auto-pilot; shown when idle or done) */}
+            {!isBackendAutoPilot && (
             <div className="flex gap-2 mb-3">
               <input type="text" value={missionInstruction} onChange={(e) => setMissionInstruction(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && pipelineStage === "idle" && onRunPipeline()}
@@ -767,9 +846,10 @@ export default function RunPage({ params }: { params: { runId: string } }) {
               <button onClick={onRunPipeline}
                 disabled={pipelineStage !== "idle" || !missionInstruction.trim()}
                 className="bg-purple-500 hover:bg-purple-600 disabled:bg-slate-600 text-white text-sm font-semibold px-4 py-2 rounded-lg transition whitespace-nowrap">
-                {pipelineStage === "reasoning" ? "🧠 Reasoning..." : pipelineStage === "planning" ? "🗺️ Planning..." : "Plan →"}
+                {pipelineStage === "reasoning" ? "🧠 Reasoning..." : pipelineStage === "planning" ? "🗺️ Planning..." : pipelineStage === "executing" ? "🚀 Executing..." : pipelineStage === "done" ? "✓ Done" : "Plan →"}
               </button>
             </div>
+            )}
 
             {missionError && (
               <div className="flex items-start gap-2 bg-red-500/15 border-l-4 border-red-500 rounded-lg p-3 mb-3 animate-slide-up">

@@ -126,6 +126,11 @@ async def _plan_and_start_loop(svc: RunService, run_id: str, mission_id: str, mi
 
         # --- Attempt LLM plan upgrade ---
         if settings.gemini_configured:
+            if svc._ws_broadcast:
+                await svc._ws_broadcast(run_id, {
+                    "kind": "planning_progress",
+                    "data": {"step": "llm_start", "message": "Calling Gemini LLM to generate optimal plan…"},
+                })
             try:
                 telemetry = {}
                 try:
@@ -138,7 +143,8 @@ async def _plan_and_start_loop(svc: RunService, run_id: str, mission_id: str, mi
                     plan = await planner.generate_plan(telemetry, mission_title, goal)
 
                 if plan and plan.get("waypoints"):
-                    svc._plans[run_id] = plan["waypoints"]
+                    async with svc._plans_lock:
+                        svc._plans[run_id] = plan["waypoints"]
                     plan_source = "gemini"
                     svc._append_event(db, run_id, "PLAN", {
                         "mission_id": mission_id,
@@ -148,10 +154,37 @@ async def _plan_and_start_loop(svc: RunService, run_id: str, mission_id: str, mi
                     })
                     db.commit()
                     logger.info("LLM plan ready for run %s (%d waypoints)", run_id, len(plan["waypoints"]))
+                    if svc._ws_broadcast:
+                        await svc._ws_broadcast(run_id, {
+                            "kind": "planning_progress",
+                            "data": {"step": "llm_done", "message": f"LLM plan ready — {len(plan['waypoints'])} waypoints generated", "waypoint_count": len(plan["waypoints"]), "source": "gemini"},
+                        })
+                else:
+                    if svc._ws_broadcast:
+                        await svc._ws_broadcast(run_id, {
+                            "kind": "planning_progress",
+                            "data": {"step": "llm_fallback", "message": "LLM returned no waypoints — using fallback plan", "source": "fallback"},
+                        })
             except (asyncio.TimeoutError, Exception) as exc:
                 logger.warning("LLM plan failed/timed out for run %s: %s — using seed fallback", run_id, exc)
+                if svc._ws_broadcast:
+                    await svc._ws_broadcast(run_id, {
+                        "kind": "planning_progress",
+                        "data": {"step": "llm_fallback", "message": f"LLM timed out — using fallback plan", "source": "fallback"},
+                    })
+        else:
+            if svc._ws_broadcast:
+                await svc._ws_broadcast(run_id, {
+                    "kind": "planning_progress",
+                    "data": {"step": "llm_skip", "message": "Gemini not configured — using fallback plan", "source": "fallback"},
+                })
 
         # --- Mission-level governance gate: Sovereign reviews the plan ---
+        if svc._ws_broadcast:
+            await svc._ws_broadcast(run_id, {
+                "kind": "planning_progress",
+                "data": {"step": "governance_start", "message": "Sovereign reviewing plan for safety compliance…"},
+            })
         plan_wps = svc._plans.get(run_id, [])
         mission_review = _review_mission_plan(goal, plan_wps, plan_source)
         svc._append_event(db, run_id, "MISSION_REVIEW", mission_review)
@@ -180,6 +213,11 @@ async def _plan_and_start_loop(svc: RunService, run_id: str, mission_id: str, mi
             return
 
         # --- Transition planning → running and launch loop ---
+        if svc._ws_broadcast:
+            await svc._ws_broadcast(run_id, {
+                "kind": "planning_progress",
+                "data": {"step": "governance_done", "message": f"Plan approved — {len(plan_wps)} waypoints cleared for execution", "verdict": mission_review["verdict"]},
+            })
         svc.begin_running(db, run_id)
 
         if svc._ws_broadcast:
@@ -191,11 +229,25 @@ async def _plan_and_start_loop(svc: RunService, run_id: str, mission_id: str, mi
             db.rollback()
         except Exception:
             pass
-        # Ensure run doesn't stay stuck in 'planning'
+        # Mark run as failed instead of launching a potentially broken loop
         try:
-            svc.begin_running(db, run_id)
+            run = db.query(Run).filter(Run.id == run_id).first()
+            if run and run.status == "planning":
+                run.status = "failed"
+                run.ended_at = __import__("app.utils.time", fromlist=["utc_now"]).utc_now()
+                db.commit()
+                logger.warning("Run %s marked failed after planning error: %s", run_id, exc)
+            if svc._ws_broadcast:
+                await svc._ws_broadcast(run_id, {
+                    "kind": "status",
+                    "data": {"status": "failed", "reason": f"Planning failed: {exc}"},
+                })
+                await svc._ws_broadcast(run_id, {
+                    "kind": "planning_progress",
+                    "data": {"step": "error", "message": f"Planning failed — {exc}"},
+                })
         except Exception as inner:
-            logger.error("Emergency begin_running also failed for run %s: %s", run_id, inner)
+            logger.error("Failed to mark run %s as failed: %s", run_id, inner)
     finally:
         db.close()
 

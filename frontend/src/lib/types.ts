@@ -25,4 +25,5 @@ export type WsMessage =
   | { kind: "event"; data: any }
   | { kind: "alert"; data: any }
   | { kind: "status"; data: any }
+  | { kind: "planning_progress"; data: any }
   | { kind: "agent_reasoning"; data: any };
