@@ -604,15 +604,15 @@ class RunService:
                         # --- Execution verification: confirm sim actually responded ---
                         exec_verified = False
                         try:
-                            post_tel = await self.sim.get_telemetry()
-                            pre_x, pre_y = float(telemetry.get("x", 0)), float(telemetry.get("y", 0))
-                            post_x, post_y = float(post_tel.get("x", 0)), float(post_tel.get("y", 0))
-                            # For MOVE_TO, robot should have changed state OR sim acknowledged
+                            # Check the response from send_command directly
                             if proposal.intent == "MOVE_TO":
-                                sim_ack = execution.get("status") == "ok" or execution.get("ack", False)
+                                sim_ack = execution.get("ok", False) or execution.get("ack", False)
+                                exec_verified = sim_ack
+                            elif proposal.intent == "STOP":
+                                sim_ack = execution.get("ok", False) or execution.get("stopped", False)
                                 exec_verified = sim_ack
                             else:
-                                exec_verified = True  # STOP etc. are verified by sim ack
+                                exec_verified = True
                         except Exception as verify_err:
                             logger.warning("Run %s: execution verification failed: %s", run_id, verify_err)
                             exec_verified = True  # fail-open on verification errors to avoid blocking
