@@ -269,7 +269,7 @@ export default function RunPage({ params }: { params: { runId: string } }) {
           } else if (s === "running") {
             setPipelineStage((prev) => (prev === "idle" || prev === "planning" || prev === "governing") ? "executing" : prev);
           } else if (s === "completed" || s === "stopped" || s === "failed") {
-            setPipelineStage((prev) => prev === "executing" ? "done" : prev);
+            setPipelineStage((prev) => prev !== "idle" && prev !== "done" ? "done" : prev);
           }
         }
         if (msg.kind === "agent_reasoning") setLiveThoughtChain(msg.data?.steps || []);

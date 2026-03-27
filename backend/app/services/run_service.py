@@ -836,6 +836,13 @@ class RunService:
                         try:
                             await self.sim.reset_robot()
                             logger.info("Run %s: robot returned to parking station", run_id)
+                            # Broadcast fresh telemetry so the frontend map shows the robot back at start
+                            if self._ws_broadcast:
+                                try:
+                                    reset_telem = await self.sim.get_telemetry()
+                                    await self._ws_broadcast(run_id, {"kind": "telemetry", "data": reset_telem})
+                                except Exception:
+                                    pass
                         except Exception as reset_err:
                             logger.warning("Run %s: failed to reset robot to parking: %s", run_id, reset_err)
 
@@ -871,6 +878,12 @@ class RunService:
                                 mission = db.query(_Mission).filter(_Mission.id == run.mission_id).first()
                                 if mission and mission.status == "executing":
                                     mission.status = "failed"
+                            if self._ws_broadcast:
+                                try:
+                                    reset_telem = await self.sim.get_telemetry()
+                                    await self._ws_broadcast(run_id, {"kind": "telemetry", "data": reset_telem})
+                                except Exception:
+                                    pass
                                 db.commit()
                         except Exception:
                             pass
