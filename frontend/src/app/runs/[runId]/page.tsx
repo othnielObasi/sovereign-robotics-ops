@@ -93,6 +93,7 @@ export default function RunPage({ params }: { params: { runId: string } }) {
   const [wsConnected, setWsConnected] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimer = useRef<any>(null);
+  const fullscreenGridRef = useRef<HTMLDivElement | null>(null);
 
   // Fix 2: scenario system
   const [scenarioLoading, setScenarioLoading] = useState<string | null>(null);
@@ -663,7 +664,7 @@ export default function RunPage({ params }: { params: { runId: string } }) {
       </div>
 
       {/* ── MAIN LAYOUT: Hero Map (left 60%) + Sidebar (right 40%) ── */}
-      <div className="grid grid-cols-1 lg:grid-cols-5 gap-3">
+      <div ref={fullscreenGridRef} className="grid grid-cols-1 lg:grid-cols-5 gap-3 [&:fullscreen]:bg-slate-900 [&:fullscreen]:p-4 [&:fullscreen]:overflow-y-auto">
 
         {/* ── LEFT: Hero Map ── */}
         <div className="lg:col-span-3 space-y-3">
@@ -700,7 +701,7 @@ export default function RunPage({ params }: { params: { runId: string } }) {
               </div>
             </div>
             <div className="min-h-[350px]">
-              <Map2D world={world} telemetry={telemetry} pathPoints={pathPoints} planWaypoints={llmPlan?.waypoints || null} missionGoal={resolveBayGoal(missionInstruction, world?.bays || []) || mission?.goal || null} showHeatmap={showHeatmap} showTrail={showTrail} safetyState={safety.state} hoveredWaypointIdx={hoveredWaypointIdx} riskCells={riskCells} executedPath={executedPathData} destinationBayId={destinationBayId} />
+              <Map2D world={world} telemetry={telemetry} pathPoints={pathPoints} planWaypoints={llmPlan?.waypoints || null} missionGoal={resolveBayGoal(missionInstruction, world?.bays || []) || mission?.goal || null} showHeatmap={showHeatmap} showTrail={showTrail} safetyState={safety.state} hoveredWaypointIdx={hoveredWaypointIdx} riskCells={riskCells} executedPath={executedPathData} destinationBayId={destinationBayId} fullscreenTargetRef={fullscreenGridRef} />
             </div>
             {/* Map Legend — explicit path ownership */}
             <div className="flex items-center gap-3 mt-2 px-1 flex-wrap">

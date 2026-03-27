@@ -58,6 +58,7 @@ export function Map2D({
   riskCells = [],
   executedPath = [],
   destinationBayId = null,
+  fullscreenTargetRef,
 }: {
   world: any | null;
   telemetry: any | null;
@@ -71,6 +72,7 @@ export function Map2D({
   riskCells?: Array<{ x: number; y: number; risk: number }>;
   executedPath?: Array<Pt>;
   destinationBayId?: string | null;
+  fullscreenTargetRef?: React.RefObject<HTMLElement | null>;
 }) {
   const ref = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -128,14 +130,14 @@ export function Map2D({
 
   /* ── Fullscreen toggle ─────────────────────────────────────── */
   const toggleFullscreen = useCallback(() => {
-    const el = containerRef.current;
+    const el = fullscreenTargetRef?.current || containerRef.current;
     if (!el) return;
     if (!document.fullscreenElement) {
       el.requestFullscreen().catch(() => {});
     } else {
       document.exitFullscreen().catch(() => {});
     }
-  }, []);
+  }, [fullscreenTargetRef]);
 
   useEffect(() => {
     const handler = () => setIsFullscreen(!!document.fullscreenElement);
