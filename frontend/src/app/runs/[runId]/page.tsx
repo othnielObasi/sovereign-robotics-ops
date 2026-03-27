@@ -94,6 +94,7 @@ export default function RunPage({ params }: { params: { runId: string } }) {
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimer = useRef<any>(null);
   const fullscreenGridRef = useRef<HTMLDivElement | null>(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
 
   // Fix 2: scenario system
   const [scenarioLoading, setScenarioLoading] = useState<string | null>(null);
@@ -187,6 +188,13 @@ export default function RunPage({ params }: { params: { runId: string } }) {
       }
     } catch (_) {}
   }
+
+  // Track fullscreen state for compact panel rendering
+  useEffect(() => {
+    const handler = () => setIsFullscreen(!!document.fullscreenElement);
+    document.addEventListener("fullscreenchange", handler);
+    return () => document.removeEventListener("fullscreenchange", handler);
+  }, []);
 
   useEffect(() => {
     (async () => {
@@ -664,10 +672,10 @@ export default function RunPage({ params }: { params: { runId: string } }) {
       </div>
 
       {/* ── MAIN LAYOUT: Hero Map (left 60%) + Sidebar (right 40%) ── */}
-      <div ref={fullscreenGridRef} className="grid grid-cols-1 lg:grid-cols-5 gap-3 [&:fullscreen]:bg-slate-900 [&:fullscreen]:p-4 [&:fullscreen]:overflow-y-auto">
+      <div ref={fullscreenGridRef} className={`grid grid-cols-1 gap-3 [&:fullscreen]:bg-slate-900 [&:fullscreen]:p-4 [&:fullscreen]:overflow-y-auto ${isFullscreen ? "lg:grid-cols-10" : "lg:grid-cols-5"}`}>
 
         {/* ── LEFT: Hero Map ── */}
-        <div className="lg:col-span-3 space-y-3">
+        <div className={`${isFullscreen ? "lg:col-span-7" : "lg:col-span-3"} space-y-3`}>
           <Card title="Warehouse Simulation">
             <div className="flex items-center justify-between mb-2">
               <div className="flex items-center gap-3">
@@ -700,7 +708,7 @@ export default function RunPage({ params }: { params: { runId: string } }) {
                 ))}
               </div>
             </div>
-            <div className="min-h-[350px]">
+            <div className={isFullscreen ? "min-h-[60vh]" : "min-h-[350px]"}>
               <Map2D world={world} telemetry={telemetry} pathPoints={pathPoints} planWaypoints={llmPlan?.waypoints || null} missionGoal={resolveBayGoal(missionInstruction, world?.bays || []) || mission?.goal || null} showHeatmap={showHeatmap} showTrail={showTrail} safetyState={safety.state} hoveredWaypointIdx={hoveredWaypointIdx} riskCells={riskCells} executedPath={executedPathData} destinationBayId={destinationBayId} fullscreenTargetRef={fullscreenGridRef} />
             </div>
             {/* Map Legend — explicit path ownership */}
@@ -1310,7 +1318,7 @@ export default function RunPage({ params }: { params: { runId: string } }) {
         </div>
 
         {/* ── RIGHT SIDEBAR ── */}
-        <div className="lg:col-span-2 space-y-3 lg:sticky lg:top-14 lg:self-start lg:max-h-[calc(100vh-4.5rem)] lg:overflow-y-auto dash-scroll">
+        <div className={`${isFullscreen ? "lg:col-span-3" : "lg:col-span-2"} space-y-3 lg:sticky lg:top-14 lg:self-start lg:max-h-[calc(100vh-4.5rem)] lg:overflow-y-auto dash-scroll`}>
 
           {/* Compact Governance Decision */}
           <Card title="Governance Decision">
@@ -1338,6 +1346,7 @@ export default function RunPage({ params }: { params: { runId: string } }) {
                   <span className="text-slate-400">Execution Risk: {lastDecision.governance?.risk_score != null ? (lastDecision.governance.risk_score * 100).toFixed(0) + "%" : "—"}</span>
                 </div>
                 {/* Scope clarification: what exactly was approved/denied */}
+                {!isFullscreen && (
                 <div className="bg-slate-900/40 rounded px-2 py-1.5 text-[10px] space-y-0.5">
                   <div className="flex items-center gap-2">
                     <span className="text-slate-500 min-w-[65px]">Scope:</span>
@@ -1355,7 +1364,8 @@ export default function RunPage({ params }: { params: { runId: string } }) {
                       : <span className="text-green-400">✓ 0 violations (8 active)</span>}</span>
                   </div>
                 </div>
-                {lastDecision.governance?.decision === "APPROVED" && (
+                )}
+                {lastDecision.governance?.decision === "APPROVED" && !isFullscreen && (
                   <div className="bg-green-500/5 border border-green-500/20 rounded p-2 space-y-1">
                     <div className="flex items-center justify-between mb-1">
                       <span className="text-green-400 font-semibold text-[10px] uppercase tracking-wider">All 8 Policies Passed</span>
@@ -1419,6 +1429,7 @@ export default function RunPage({ params }: { params: { runId: string } }) {
           </CollapsibleCard>
 
           {/* Chain-of-Trust Timeline (compact, icons) */}
+          {!isFullscreen && (
           <Card title="Chain-of-Trust">
             {events.length === 0 ? (
               <div className="text-slate-500 text-xs text-center py-2">🔗 No events yet.</div>
@@ -1443,8 +1454,10 @@ export default function RunPage({ params }: { params: { runId: string } }) {
               </div>
             )}
           </Card>
+          )}
 
           {/* Alerts */}
+          {!isFullscreen && (
           <Card title="Alerts">
             {alerts.length === 0 ? (
               <div className="text-xs text-slate-500 space-y-1">
@@ -1490,20 +1503,26 @@ export default function RunPage({ params }: { params: { runId: string } }) {
               </ul>
             )}
           </Card>
+          )}
 
           {/* Scorecard (#10) */}
+          {!isFullscreen && (
           <CollapsibleCard title="📊 Performance Scorecard" defaultOpen={true}
             hint={<span className="text-slate-400">5 dimensions tracked</span>}>
             <ScoreCard runId={runId} />
           </CollapsibleCard>
+          )}
 
           {/* Agent Introspection (#20) */}
+          {!isFullscreen && (
           <CollapsibleCard title="🔍 Agent Introspection" defaultOpen={true}
             hint={replanCount > 0 ? <span className="text-amber-400">{replanCount} replans · {lastDenialPolicy || "policy hit"}</span> : <span className="text-green-400">No denials</span>}>
             <IntrospectionPanel runId={runId} />
           </CollapsibleCard>
+          )}
 
           {/* Safety Report (#14) */}
+          {!isFullscreen && (
           <CollapsibleCard title="🛡️ Safety Report" defaultOpen={false}
             hint={safetyReport ? <span className={safetyReport.verdict === "PASS" ? "text-green-400" : "text-red-400"}>{safetyReport.verdict === "PASS" ? "✓ PASS" : safetyReport.verdict === "FAIL" ? "✗ FAIL" : "⚠ " + safetyReport.verdict} · {safetyReport.checks_run || 0} checks</span> : <span className="text-slate-500">Awaiting data</span>}>
             {!safetyReport ? (
@@ -1543,8 +1562,10 @@ export default function RunPage({ params }: { params: { runId: string } }) {
               </div>
             )}
           </CollapsibleCard>
+          )}
 
           {/* Optimization Analysis (#7) */}
+          {!isFullscreen && (
           <CollapsibleCard title="⚡ Optimization Analysis" defaultOpen={false}
             hint={optimizationAnalysis ? <span className="text-cyan-400">Eff: {((optimizationAnalysis.scorecard?.scores?.efficiency ?? 0) * 100).toFixed(0)}% · Safety: {((optimizationAnalysis.scorecard?.scores?.safety ?? 0) * 100).toFixed(0)}%</span> : <span className="text-slate-500">Click to load</span>}>
             {!optimizationAnalysis ? (
@@ -1601,8 +1622,10 @@ export default function RunPage({ params }: { params: { runId: string } }) {
               </div>
             )}
           </CollapsibleCard>
+          )}
 
           {/* Divergence Explanation (#20) */}
+          {!isFullscreen && (
           <CollapsibleCard title="🔀 Divergence Explanation" defaultOpen={true}
             hint={divergenceExplanation ? (divergenceExplanation.divergence_detected ? <span className="text-yellow-400">⚠ Diverged · {divergenceExplanation.max_deviation?.toFixed?.(1) || "?"}m</span> : <span className="text-green-400">✓ On Track</span>) : <span className="text-slate-500">Click to analyze</span>}>
             <div className="space-y-2">
@@ -1633,6 +1656,7 @@ export default function RunPage({ params }: { params: { runId: string } }) {
               )}
             </div>
           </CollapsibleCard>
+          )}
         </div>
       </div>
 
