@@ -122,7 +122,12 @@ export function ScoreCard({ runId }: { runId: string }) {
   if (!scores || scores.error) return <div className="text-xs text-slate-500 text-center py-2">No score data</div>;
 
   const s = scores.scores || {};
-  const composite = scores.composite ?? 0;
+  const composite = s.composite ?? 0;
+  const weights = scores.weights || {};
+  const scoredDims = DIMS.map((dim) => ({ dim, value: Number(s[dim] ?? 0) }));
+  const sortedDims = [...scoredDims].sort((a, b) => b.value - a.value);
+  const strongest = sortedDims[0];
+  const weakest = sortedDims[sortedDims.length - 1];
 
   return (
     <div className="space-y-3">
@@ -143,6 +148,21 @@ export function ScoreCard({ runId }: { runId: string }) {
             {integrity.verdict === "CLEAN" ? "✓ Clean" : integrity.verdict === "FLAGGED" ? "⚠ Flagged" : "✗ Suspicious"}
           </div>
         )}
+      </div>
+
+      {/* Reward scoring assessment */}
+      <div className="text-[10px] text-slate-400 bg-slate-900/50 border border-slate-700 rounded-lg p-2 space-y-1">
+        <div className="uppercase tracking-wider text-slate-500 font-semibold">Reward Scoring Assessment</div>
+        <div>
+          Strongest: <span className="text-green-300 font-semibold">{DIM_LABELS[strongest.dim]}</span>{" "}
+          ({(strongest.value * 100).toFixed(0)}%)
+          {" · "}
+          Weakest: <span className="text-red-300 font-semibold">{DIM_LABELS[weakest.dim]}</span>{" "}
+          ({(weakest.value * 100).toFixed(0)}%)
+        </div>
+        <div className="text-slate-500">
+          Weights → Safety {Math.round((weights.safety ?? 0) * 100)}%, Compliance {Math.round((weights.compliance ?? 0) * 100)}%, Mission {Math.round((weights.mission_success ?? 0) * 100)}%, Efficiency {Math.round((weights.efficiency ?? 0) * 100)}%, Smoothness {Math.round((weights.smoothness ?? 0) * 100)}%.
+        </div>
       </div>
 
       {/* Radar chart */}
