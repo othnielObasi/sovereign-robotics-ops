@@ -122,7 +122,7 @@ export function ScoreCard({ runId }: { runId: string }) {
   if (!scores || scores.error) return <div className="text-xs text-slate-500 text-center py-2">No score data</div>;
 
   const s = scores.scores || {};
-  const composite = scores.composite ?? 0;
+  const composite = s.composite ?? 0;
 
   return (
     <div className="space-y-3">
