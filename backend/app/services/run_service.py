@@ -652,33 +652,51 @@ class RunService:
                         self._wp_denial_counts[run_id] = self._wp_denial_counts.get(run_id, 0) + 1
                         denial_count = self._wp_denial_counts[run_id]
 
-                        # NEEDS_REVIEW with escalation: pause run for operator decision
+                        # NEEDS_REVIEW: execute cautiously at reduced speed (soft policy hit)
+                        # Only pause if NEEDS_REVIEW persists for too many consecutive ticks
                         if gov_decision.decision == "NEEDS_REVIEW":
-                            logger.warning("Run %s: NEEDS_REVIEW — pausing for operator", run_id)
-                            run.status = "paused"
-                            if mission and mission.status == "executing":
-                                mission.status = "paused"
-                            self._append_event(db, run_id, "INTERVENTION", {
-                                "type": "AUTO_PAUSE",
-                                "reason": "Governance requires operator review",
-                                "policy_hits": gov_decision.policy_hits,
-                                "denial_count": denial_count,
-                            })
-                            db.commit()
-                            if self._ws_broadcast:
-                                await self._ws_broadcast(run_id, {
-                                    "kind": "status",
-                                    "data": {
-                                        "status": "paused",
-                                        "reason": "needs_operator_review",
-                                        "policy_hits": gov_decision.policy_hits,
-                                        "denial_reasons": gov_decision.reasons,
-                                    },
+                            NEEDS_REVIEW_PAUSE_THRESHOLD = 5  # pause after 5 consecutive NEEDS_REVIEW
+                            if denial_count >= NEEDS_REVIEW_PAUSE_THRESHOLD:
+                                logger.warning("Run %s: %d consecutive NEEDS_REVIEW — pausing for operator", run_id, denial_count)
+                                run.status = "paused"
+                                if mission and mission.status == "executing":
+                                    mission.status = "paused"
+                                self._append_event(db, run_id, "INTERVENTION", {
+                                    "type": "AUTO_PAUSE",
+                                    "reason": "Repeated governance review required — pausing for operator",
+                                    "policy_hits": gov_decision.policy_hits,
+                                    "denial_count": denial_count,
                                 })
-                            # Wait for operator to resume via override endpoint
-                            if run_id not in self._pause_flags:
-                                self._pause_flags[run_id] = asyncio.Event()
-                            self._pause_flags[run_id].set()
+                                db.commit()
+                                if self._ws_broadcast:
+                                    await self._ws_broadcast(run_id, {
+                                        "kind": "status",
+                                        "data": {
+                                            "status": "paused",
+                                            "reason": "needs_operator_review",
+                                            "policy_hits": gov_decision.policy_hits,
+                                            "denial_reasons": gov_decision.reasons,
+                                        },
+                                    })
+                                if run_id not in self._pause_flags:
+                                    self._pause_flags[run_id] = asyncio.Event()
+                                self._pause_flags[run_id].set()
+                            else:
+                                # Execute at reduced speed — governance says SLOW, not STOP
+                                logger.info("Run %s: NEEDS_REVIEW — executing cautiously (count %d)", run_id, denial_count)
+                                cautious_params = dict(proposal.params)
+                                cautious_params["max_speed"] = min(cautious_params.get("max_speed", 0.5), 0.2)
+                                cmd = {"intent": proposal.intent, "params": cautious_params}
+                                execution = await self.sim.send_command(cmd)
+                                exec_verified = execution.get("ok", False) or execution.get("ack", False)
+                                self._append_event(db, run_id, "EXECUTION", {
+                                    "command": cmd,
+                                    "result": execution,
+                                    "verified": exec_verified,
+                                    "cautious": True,
+                                    "governance_state": gov_decision.policy_state,
+                                })
+                                was_executed = True
 
                         elif denial_count >= self.REPLAN_DENIAL_THRESHOLD and wp:
                             # Trigger replanning: discard blocked waypoint and request new plan
