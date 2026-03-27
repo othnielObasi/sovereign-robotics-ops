@@ -598,7 +598,7 @@ export default function RunPage({ params }: { params: { runId: string } }) {
       </div>
 
       {/* ── Multi-Scope Status Strip ── */}
-      <div className={`grid grid-cols-5 gap-1.5 px-3 py-2 rounded-lg border ${safetyBannerCls[safety.state] || safetyBannerCls.OK}`}>
+      <div className={`sticky top-0 z-20 backdrop-blur-md grid grid-cols-5 gap-1.5 px-3 py-2 rounded-lg border ${safetyBannerCls[safety.state] || safetyBannerCls.OK}`}>
         {/* Mission Status */}
         <div className="flex flex-col items-center text-center">
           <span className="text-[9px] uppercase tracking-wider text-slate-500 font-semibold">Mission</span>
@@ -699,7 +699,7 @@ export default function RunPage({ params }: { params: { runId: string } }) {
                 ))}
               </div>
             </div>
-            <div className="min-h-[450px]">
+            <div className="min-h-[350px]">
               <Map2D world={world} telemetry={telemetry} pathPoints={pathPoints} planWaypoints={llmPlan?.waypoints || null} missionGoal={resolveBayGoal(missionInstruction, world?.bays || []) || mission?.goal || null} showHeatmap={showHeatmap} showTrail={showTrail} safetyState={safety.state} hoveredWaypointIdx={hoveredWaypointIdx} riskCells={riskCells} executedPath={executedPathData} destinationBayId={destinationBayId} />
             </div>
             {/* Map Legend — explicit path ownership */}
@@ -1309,7 +1309,7 @@ export default function RunPage({ params }: { params: { runId: string } }) {
         </div>
 
         {/* ── RIGHT SIDEBAR ── */}
-        <div className="lg:col-span-2 space-y-3">
+        <div className="lg:col-span-2 space-y-3 lg:sticky lg:top-14 lg:self-start lg:max-h-[calc(100vh-4.5rem)] lg:overflow-y-auto dash-scroll">
 
           {/* Compact Governance Decision */}
           <Card title="Governance Decision">
