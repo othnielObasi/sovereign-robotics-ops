@@ -23,6 +23,11 @@ function resolveBayGoal(instruction: string, bays: any[]): { x: number; y: numbe
   return null;
 }
 
+function sanitizeMissionTitle(title?: string | null): string {
+  if (!title) return "";
+  return title.replace(/\binvestor demo\b/gi, "").replace(/\s{2,}/g, " ").trim();
+}
+
 function Card({ title, children, className = "" }: { title: string; children: React.ReactNode; className?: string }) {
   return (
     <div className={`bg-slate-800/80 border border-slate-700/60 rounded-xl p-4 shadow-lg shadow-black/20 ${className}`}>
@@ -242,7 +247,7 @@ export default function RunPage({ params }: { params: { runId: string } }) {
           // Also advance pipelineStage based on substep
           if (d.step === "llm_start") setPipelineStage("planning");
           if (d.step === "governance_start") setPipelineStage("governing");
-          if (d.step === "governance_done") setPipelineStage("executing");
+          if (d.step === "governance_done") setPipelineStage("ready");
           // If LLM plan came back, trigger event refresh so map picks it up
           if (d.step === "llm_done") refreshEvents();
         }
@@ -266,7 +271,7 @@ export default function RunPage({ params }: { params: { runId: string } }) {
           } else if (s === "running") {
             setPipelineStage((prev) => (prev === "idle" || prev === "planning" || prev === "governing") ? "executing" : prev);
           } else if (s === "completed" || s === "stopped" || s === "failed") {
-            setPipelineStage((prev) => prev === "executing" ? "done" : prev);
+            setPipelineStage((prev) => (prev === "executing" || prev === "ready" || prev === "planning" || prev === "governing") ? "done" : prev);
           }
         }
         if (msg.kind === "agent_reasoning") setLiveThoughtChain(msg.data?.steps || []);
@@ -525,6 +530,20 @@ export default function RunPage({ params }: { params: { runId: string } }) {
   const isBackendAutoPilot = (currentStatus === "planning" || currentStatus === "running")
     && !agenticResult && !llmExecResult;
 
+  const governanceSummary = useMemo(() => {
+    const checks = llmPlan?.governance || [];
+    const approved = checks.filter((g: any) => g?.decision === "APPROVED").length;
+    const total = checks.length || (llmPlan?.waypoints?.length || 0);
+    const denied = checks.filter((g: any) => g?.decision === "DENIED").length;
+    const flagged = total - approved;
+    const plannerConfidence = total > 0 ? Math.max(0.05, Math.min(0.99, approved / total)) : 0.5;
+    const policyRiskFromState = livePolicyState === "STOP" ? 0.95 : livePolicyState === "REPLAN" ? 0.7 : livePolicyState === "SLOW" ? 0.45 : 0.15;
+    const policyRiskFromChecks = total > 0 ? Math.max(0, Math.min(1, flagged / total)) : 0.15;
+    const governanceRisk = Math.max(policyRiskFromState, policyRiskFromChecks);
+    const policyHits = Array.from(new Set(checks.flatMap((g: any) => g?.policy_hits || [])));
+    return { approved, denied, total, flagged, plannerConfidence, governanceRisk, policyHits };
+  }, [llmPlan, livePolicyState]);
+
   const safetyBannerCls: Record<string, string> = {
     OK: "bg-green-500/15 border-green-500/30 text-green-400",
     STOP: "bg-red-500/20 border-red-500/40 text-red-400",
@@ -559,7 +578,7 @@ export default function RunPage({ params }: { params: { runId: string } }) {
         </div>
         <div className="flex items-center gap-2">
           {run?.mission_id && <span className="text-xs text-slate-500 font-mono">{run.mission_id}</span>}
-          {mission?.title && <span className="text-xs text-cyan-400 font-medium truncate max-w-[200px]" title={mission.title}>{mission.title}</span>}
+          {mission?.title && <span className="text-xs text-cyan-400 font-medium truncate max-w-[200px]" title={sanitizeMissionTitle(mission.title)}>{sanitizeMissionTitle(mission.title)}</span>}
           {mission?.goal && <span className="text-[10px] text-slate-500">→ ({mission.goal.x}, {mission.goal.y})</span>}
           {currentStatus !== "stopped" && (
             <button onClick={onStop} className="bg-red-500/80 hover:bg-red-600 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition">
@@ -790,7 +809,7 @@ export default function RunPage({ params }: { params: { runId: string } }) {
                 <div className="flex items-center gap-2 mb-2 text-xs text-slate-400">
                   {mission && (
                     <span className="bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 px-2 py-0.5 rounded-full">
-                      Mission: {mission.title}
+                      Mission: {sanitizeMissionTitle(mission.title)}
                     </span>
                   )}
                   {activeGoal && (
@@ -833,6 +852,42 @@ export default function RunPage({ params }: { params: { runId: string } }) {
                     </div>
                   );
                 })}
+              </div>
+            )}
+
+            {/* ── Auto execution diagnostics shown even when agenticResult is unavailable ── */}
+            {isBackendAutoPilot && (
+              <div className="bg-slate-900/60 border border-cyan-500/20 rounded-lg p-3 mb-3 space-y-2">
+                <div className="text-[10px] uppercase tracking-wider text-cyan-300 font-semibold">Autonomous Runtime Details</div>
+                <div className="text-[11px] text-slate-300">
+                  <span className="text-cyan-400 font-semibold">Constraints:</span>{" "}
+                  {world?.human ? `human @(${world.human.x},${world.human.y})` : "human unknown"} ·{" "}
+                  {((world?.obstacles || []).length > 0) ? `${world.obstacles.length} obstacles` : "no obstacles"} ·{" "}
+                  policy state <span className="font-semibold">{livePolicyState}</span>
+                </div>
+                <div className="text-[11px] text-slate-300">
+                  <span className="text-emerald-400 font-semibold">Strategy:</span>{" "}
+                  {llmPlan?.rationale || planningSteps[planningSteps.length - 1]?.message || "Awaiting planner output…"}
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px]">
+                  <div className="bg-slate-950/50 border border-slate-700 rounded p-2">
+                    <div className="text-yellow-300 font-semibold">Planner confidence</div>
+                    <div className="text-white font-bold">{(governanceSummary.plannerConfidence * 100).toFixed(0)}%</div>
+                  </div>
+                  <div className="bg-slate-950/50 border border-slate-700 rounded p-2">
+                    <div className="text-red-300 font-semibold">Governance risk</div>
+                    <div className="text-white font-bold">{(governanceSummary.governanceRisk * 100).toFixed(0)}%</div>
+                  </div>
+                </div>
+                <div className="text-[11px] text-slate-300">
+                  <span className="text-green-300 font-semibold">Checks satisfied:</span>{" "}
+                  {governanceSummary.total > 0
+                    ? `${governanceSummary.approved}/${governanceSummary.total} waypoint checks approved`
+                    : "Waiting for governance checks"}
+                  {governanceSummary.policyHits.length > 0 && (
+                    <span className="text-slate-400"> · policy hits: {governanceSummary.policyHits.join(", ")}</span>
+                  )}
+                </div>
               </div>
             )}
 
