@@ -46,7 +46,7 @@ fi
 REPO="https://github.com/othnielObasi/sovereign-robotics-ops.git"
 APP_DIR="/opt/sovereign-robotics-ops"
 if [ -d "$APP_DIR" ]; then
-  cd "$APP_DIR" && git pull origin main || true
+  cd "$APP_DIR" && git fetch origin main && git reset --hard origin/main
 else
   git clone "$REPO" "$APP_DIR"
   cd "$APP_DIR"

@@ -20,7 +20,8 @@ ADMIN_EMAIL="${2:-admin@nov-tia.com}"
 if [ -d "$APP_DIR" ]; then
   echo "Updating existing repo..."
   cd "$APP_DIR"
-  git pull origin main
+  git fetch origin main
+  git reset --hard origin/main
 else
   echo "Cloning repo..."
   git clone "$REPO_URL" "$APP_DIR"
