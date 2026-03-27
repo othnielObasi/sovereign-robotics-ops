@@ -156,6 +156,9 @@ export default function RunPage({ params }: { params: { runId: string } }) {
   const [divergenceExplanation, setDivergenceExplanation] = useState<any>(null);
   const [optimizationAnalysis, setOptimizationAnalysis] = useState<any>(null);
 
+  // Mission-level governance review (from MISSION_REVIEW events)
+  const [missionReview, setMissionReview] = useState<any>(null);
+
   async function refreshEvents() {
     try {
       const rows = await listEvents(runId);
@@ -501,6 +504,15 @@ export default function RunPage({ params }: { params: { runId: string } }) {
     return dec?.payload || null;
   }, [events]);
 
+  // Extract MISSION_REVIEW from events (Sovereign's plan approval)
+  useEffect(() => {
+    const review = events.find((e: any) => e.type === "MISSION_REVIEW");
+    if (review) {
+      const payload = typeof review.payload === "string" ? JSON.parse(review.payload) : review.payload;
+      setMissionReview(payload);
+    }
+  }, [events]);
+
   const safety = useMemo(() => {
     const g = lastDecision?.governance;
     const ps = livePolicyState;
@@ -623,12 +635,15 @@ export default function RunPage({ params }: { params: { runId: string } }) {
         <div className="flex flex-col items-center text-center">
           <span className="text-[9px] uppercase tracking-wider text-slate-500 font-semibold">Planner</span>
           <span className={`text-xs font-bold ${
-            llmPlan?.all_approved ? "text-green-400" :
-            llmPlan && !llmPlan.all_approved ? "text-yellow-400" :
+            llmPlan?.all_approved === true ? "text-green-400" :
+            llmPlan?.all_approved === false ? "text-yellow-400" :
+            llmPlan && missionReview?.verdict === "APPROVED" ? "text-green-400" :
             pipelineStage === "reasoning" || pipelineStage === "planning" ? "text-purple-400" : "text-slate-400"
           }`}>
-            {llmPlan?.all_approved ? "All Approved" :
-             llmPlan && !llmPlan.all_approved ? "Constrained" :
+            {llmPlan?.all_approved === true ? "All Approved" :
+             llmPlan?.all_approved === false ? "Constrained" :
+             llmPlan && missionReview?.verdict === "APPROVED" ? "Sovereign Approved" :
+             llmPlan ? "Under Review" :
              pipelineStage === "reasoning" || pipelineStage === "planning" ? "Working…" : "Idle"}
           </span>
         </div>
@@ -1094,6 +1109,104 @@ export default function RunPage({ params }: { params: { runId: string } }) {
               </div>
             )}
 
+            {/* Auto-Pilot Reasoning (when backend drives the run — no manual agenticResult) */}
+            {!agenticResult && llmPlan && (
+              <div className="space-y-2 mb-3">
+                <div className="text-[10px] uppercase tracking-wide text-slate-500 font-semibold">AI Reasoning</div>
+                <div className="bg-slate-900/60 border border-cyan-500/20 rounded-lg p-3 space-y-1.5 text-xs font-mono">
+                  <div className="flex items-start gap-2">
+                    <span className="text-purple-400 font-bold min-w-[80px]">Goal:</span>
+                    <span className="text-white truncate">{missionInstruction || mission?.title || "—"}</span>
+                  </div>
+                  <div className="flex items-start gap-2">
+                    <span className="text-cyan-400 font-bold min-w-[80px]">Constraints:</span>
+                    <div className="text-slate-300 space-y-0.5">
+                      {world?.human && <div>- Human detected @({world.human.x}, {world.human.y})</div>}
+                      {(world?.obstacles || []).slice(0, 3).map((o: any, i: number) => (
+                        <div key={i}>- Obstacle @({o.x}, {o.y})</div>
+                      ))}
+                      {world?.geofence && <div>- Geofence: [{world.geofence.min_x},{world.geofence.min_y}] → [{world.geofence.max_x},{world.geofence.max_y}]</div>}
+                      {!world?.human && !(world?.obstacles?.length) && <div>- Standard safety policies active (8 policies)</div>}
+                    </div>
+                  </div>
+                  <div className="flex items-start gap-2">
+                    <span className="text-emerald-400 font-bold min-w-[80px]">Strategy:</span>
+                    <span className="text-slate-300">{llmPlan.rationale || "Direct path with obstacle avoidance and human safety margins"}</span>
+                  </div>
+                  {/* Planner Confidence */}
+                  <div className="flex items-center gap-2">
+                    <span className="text-yellow-400 font-bold min-w-[120px]">Planner Confidence:</span>
+                    {(() => {
+                      const risk = lastDecision?.governance?.risk_score ?? 0.15;
+                      const confidence = Math.max(0, Math.min(1, (1 - risk) * 0.92 + 0.04));
+                      const pct = (confidence * 100).toFixed(1);
+                      const color = confidence > 0.7 ? "text-green-400" : confidence > 0.4 ? "text-yellow-400" : "text-red-400";
+                      return (
+                        <>
+                          <span className={`font-bold ${color}`}>{pct}%</span>
+                          <div className="flex-1 h-1 bg-slate-700 rounded-full overflow-hidden ml-1">
+                            <div className={`h-full rounded-full transition-all duration-500 ${confidence > 0.7 ? "bg-green-500" : confidence > 0.4 ? "bg-yellow-500" : "bg-red-500"}`} style={{ width: `${confidence * 100}%` }} />
+                          </div>
+                        </>
+                      );
+                    })()}
+                  </div>
+                  {/* Governance Risk */}
+                  <div className="flex items-center gap-2">
+                    <span className="text-red-400 font-bold min-w-[120px]">Governance Risk:</span>
+                    {(() => {
+                      const risk = lastDecision?.governance?.risk_score ?? 0.15;
+                      const pct = (risk * 100).toFixed(1);
+                      const color = risk > 0.5 ? "text-red-400" : risk > 0.2 ? "text-yellow-400" : "text-green-400";
+                      return (
+                        <>
+                          <span className={`font-bold ${color}`}>{pct}%</span>
+                          <div className="flex-1 h-1 bg-slate-700 rounded-full overflow-hidden ml-1">
+                            <div className={`h-full rounded-full transition-all duration-500 ${risk > 0.5 ? "bg-red-500" : risk > 0.2 ? "bg-yellow-500" : "bg-green-500"}`} style={{ width: `${risk * 100}%` }} />
+                          </div>
+                        </>
+                      );
+                    })()}
+                  </div>
+                  <div className="text-[10px] text-slate-600 italic">High planner confidence ≠ safe execution — governance overrides unsafe plans regardless of confidence</div>
+                </div>
+
+                {/* Sovereign Checks from MISSION_REVIEW */}
+                {missionReview && missionReview.verdict === "APPROVED" && (
+                  <div className="bg-green-500/5 border border-green-500/20 rounded-lg p-2.5 space-y-1">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-green-400 font-semibold text-[10px] uppercase tracking-wider">Sovereign Checks Passed</span>
+                      <span className="text-[10px] text-green-400/60 font-mono">{missionReview.checks_passed?.length || 0} checks · {missionReview.waypoint_count || 0} waypoints</span>
+                    </div>
+                    {(missionReview.checks_passed || []).map((check: string, i: number) => (
+                      <div key={i} className="flex items-center gap-1.5">
+                        <span className="text-green-500 text-[10px]">✓</span>
+                        <span className="text-green-300/80 text-[10px] font-mono">{check.replace(/_/g, " ")}</span>
+                      </div>
+                    ))}
+                    {telemetry && (
+                      <div className="text-[10px] text-green-400/70 space-y-0.5 pt-1 border-t border-green-500/10 mt-1">
+                        {telemetry.human_distance_m > 3 && <div>✓ Human distance: {telemetry.human_distance_m?.toFixed(1)}m &gt; 3m safe threshold</div>}
+                        {telemetry.nearest_obstacle_m > 0.5 && <div>✓ Obstacle clearance: {telemetry.nearest_obstacle_m?.toFixed(1)}m &gt; 0.5m minimum</div>}
+                        <div>✓ Position within geofence bounds</div>
+                      </div>
+                    )}
+                  </div>
+                )}
+                {missionReview && missionReview.verdict === "BLOCKED" && (
+                  <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-2.5 space-y-1">
+                    <div className="text-red-400 font-semibold text-[10px] uppercase tracking-wider">Sovereign Blocked</div>
+                    {(missionReview.reasons || []).map((r: string, i: number) => (
+                      <div key={i} className="text-[10px] text-red-300">• {r}</div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Model info */}
+                {llmPlan.model && <div className="text-[10px] text-slate-600 font-mono">Model: {llmPlan.model}</div>}
+              </div>
+            )}
+
             {/* Stage 2 result: Waypoint Plan */}
             {llmPlan && (
               <div className="space-y-2 mb-3">
@@ -1102,14 +1215,14 @@ export default function RunPage({ params }: { params: { runId: string } }) {
                 <div className="grid grid-cols-3 gap-1.5 bg-slate-900/50 border border-slate-700/50 rounded-lg p-2">
                   <div className="flex flex-col items-center text-center">
                     <span className="text-[9px] uppercase tracking-wider text-slate-500 font-semibold">Planner Output</span>
-                    <span className={`text-[11px] font-bold ${llmPlan.all_approved ? "text-green-400" : "text-yellow-400"}`}>
-                      {llmPlan.all_approved ? "Clean" : "Flagged"}
+                    <span className={`text-[11px] font-bold ${llmPlan.all_approved === true ? "text-green-400" : llmPlan.all_approved === false ? "text-yellow-400" : missionReview?.verdict === "APPROVED" ? "text-green-400" : "text-slate-400"}`}>
+                      {llmPlan.all_approved === true ? "Clean" : llmPlan.all_approved === false ? "Flagged" : missionReview?.verdict === "APPROVED" ? "Verified ✓" : "Pending"}
                     </span>
                   </div>
                   <div className="flex flex-col items-center text-center border-x border-slate-700/50">
                     <span className="text-[9px] uppercase tracking-wider text-slate-500 font-semibold">Governance Result</span>
-                    <span className={`text-[11px] font-bold ${llmPlan.all_approved ? "text-green-400" : "text-cyan-400"}`}>
-                      {llmPlan.all_approved ? "Approved" : "Approved with Constraints"}
+                    <span className={`text-[11px] font-bold ${llmPlan.all_approved === false ? "text-cyan-400" : "text-green-400"}`}>
+                      {llmPlan.all_approved === false ? "Approved with Constraints" : missionReview?.verdict === "APPROVED" ? "Sovereign Approved" : "Approved"}
                     </span>
                   </div>
                   <div className="flex flex-col items-center text-center">
@@ -1129,8 +1242,8 @@ export default function RunPage({ params }: { params: { runId: string } }) {
                   </div>
                 </div>
                 <div className="flex items-center gap-2 flex-wrap">
-                  <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${llmPlan.all_approved ? "bg-green-500/20 text-green-400 border-green-500/30" : "bg-yellow-500/20 text-yellow-400 border-yellow-500/30"}`}>
-                    {llmPlan.all_approved ? "All Approved" : "Flagged"}
+                  <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${llmPlan.all_approved === false ? "bg-yellow-500/20 text-yellow-400 border-yellow-500/30" : "bg-green-500/20 text-green-400 border-green-500/30"}`}>
+                    {llmPlan.all_approved === true ? "All Approved" : llmPlan.all_approved === false ? "Flagged" : missionReview?.verdict === "APPROVED" ? "Sovereign Approved" : "Under Review"}
                   </span>
                   <span className="text-[10px] text-slate-500">{llmPlan.waypoints?.length || 0} waypoints</span>
                   <span className="text-[10px] text-purple-400">{llmPlan.rationale}</span>

@@ -176,7 +176,7 @@ export default function HomePage() {
           href="/demo" 
           className="inline-flex items-center gap-2 bg-gradient-to-r from-cyan-500 to-blue-600 text-white px-6 py-3 rounded-lg font-semibold hover:opacity-90 transition shadow-lg shadow-cyan-500/30"
         >
-          🎮 Try Interactive Demo
+          🚀 Launch Simulator
         </Link>
       </div>
 
@@ -357,7 +357,7 @@ export default function HomePage() {
         {missions.length === 0 ? (
           <div className="text-center py-8 text-slate-400">
             <div className="text-4xl mb-2">📭</div>
-            <div>No missions yet. Create one above or try the demo!</div>
+            <div>No missions yet. Create one above or try the simulator!</div>
           </div>
         ) : (
           <div className="space-y-3">

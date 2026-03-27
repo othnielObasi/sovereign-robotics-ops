@@ -10,7 +10,7 @@ const links = [
   { href: "/runs", label: "Runs" },
   { href: "/compliance", label: "Compliance" },
   { href: "/audit", label: "Audit Trail" },
-  { href: "/demo", label: "Demo" },
+  { href: "/demo", label: "Simulator" },
   { href: "/policies", label: "Policies" },
 ];
 
