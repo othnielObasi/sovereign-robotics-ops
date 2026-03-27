@@ -12,9 +12,13 @@ services:
 
   backend:
     build: ./backend
-    env_file: .env
+    env_file:
+      - path: .env
+        required: false
     environment:
+      DATABASE_URL: "postgresql://sro:sro@postgres:5432/sro"
       SIM_BASE_URL: "http://mock-sim:8090"
+      CORS_ORIGINS: "http://localhost:3000"
     ports:
       - "8080:8080"
     depends_on:
@@ -38,7 +42,11 @@ services:
 
   frontend:
     build: ./frontend
-    env_file: .env
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      BACKEND_URL: "http://backend:8080"
     ports:
       - "3000:3000"
     depends_on:
