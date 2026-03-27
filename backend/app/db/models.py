@@ -74,7 +74,7 @@ class Event(Base):
     __tablename__ = "events"
 
     id = Column(String, primary_key=True, index=True)
-    run_id = Column(String, ForeignKey("runs.id"), nullable=False)
+    run_id = Column(String, ForeignKey("runs.id"), nullable=False, index=True)
     ts = Column(DateTime(timezone=True), nullable=False)
     type = Column(String, nullable=False)  # TELEMETRY|DECISION|ALERT|EXECUTION|PLAN|STAGNATION|INTERVENTION
     payload_json = Column(Text, nullable=False)
